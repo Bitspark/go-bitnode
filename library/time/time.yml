@@ -1,0 +1,56 @@
+name: time
+permissions:
+  view:
+    public: true
+description: ""
+types: []
+interfaces:
+    - name: Clock
+      description: A clock providing access to the current time.
+      hubs:
+        - description: Returns the current UNIX timestamp in seconds as a float.
+          direction: in
+          input: []
+          name: getTimestamp
+          output:
+            - name: timestamp
+              value: float
+          type: pipe
+    - name: Trigger
+      description: A trigger emitting ticks.
+      hubs:
+        - description: Outputs a trigger signal, indicating that the trigger has fired.
+          direction: out
+          name: tick
+          value:
+            value:
+              mapOf:
+                ticks:
+                  value: integer
+                elapsed:
+                  value: float
+          type: channel
+blueprints:
+    - name: Clock
+      description: Provides time and date related functionality.
+      constructor: []
+      interface:
+        extends:
+            - Clock
+        hubs: []
+      implementation:
+        time:
+            - system: Clock
+    - name: Trigger
+      description: Emits trigger events in the given interval.
+      constructor:
+        - name: interval
+          description: Interval in seconds this trigger should fire.
+          value: float
+      interface:
+        extends:
+            - Trigger
+        hubs: []
+      implementation:
+        time:
+            - system: Trigger

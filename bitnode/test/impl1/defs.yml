@@ -1,0 +1,10 @@
+name: helloWorld
+
+types: []
+
+interfaces:
+  - name: HelloWorld
+
+blueprints:
+  - name: HelloWorld
+    implements: $HelloWorld

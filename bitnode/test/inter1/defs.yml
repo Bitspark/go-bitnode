@@ -1,0 +1,12 @@
+name: inter1
+
+types: [ ]
+
+interfaces:
+  - name: IO
+    absorb:
+      - interface:
+          value: string
+    emit:
+      - interface:
+          value: string

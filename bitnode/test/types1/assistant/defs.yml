@@ -1,0 +1,7 @@
+name: assistant
+
+types:
+  - name: at
+    mapOf:
+      name:
+        leaf: string

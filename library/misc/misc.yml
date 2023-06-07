@@ -1,0 +1,120 @@
+name: misc
+description: Miscellaneous items.
+permissions:
+    owner: "0000000000000000000000000000"
+    admin:
+        public: false
+        auth: false
+        users: []
+        groups: []
+    extend:
+        public: false
+        auth: false
+        users: []
+        groups: []
+    view:
+        public: true
+        auth: false
+        users: []
+        groups: []
+types: []
+interfaces: []
+blueprints:
+    - name: Blank
+      description: A blank blueprint, suited for creating blank systems.
+      constructor: []
+      interface: {}
+      implementation: {}
+    - name: Counter
+      description: A blueprint for a counter.
+      permissions:
+        owner: "0000000000000000000000000000"
+        admin:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        extend:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        view:
+            public: false
+            auth: false
+            users: []
+            groups: []
+      constructor: []
+      interface:
+        hubs:
+            - description: Resets the counter to 0.
+              direction: in
+              input: []
+              name: reset
+              output: []
+              type: pipe
+            - description: Increments the counter by 1 and returns the new counter value.
+              direction: in
+              input: []
+              name: increment
+              output:
+                - name: newValue
+                  value: integer
+              type: pipe
+            - description: Current value of the counter.
+              direction: out
+              name: value
+              type: value
+              value:
+                name: value
+                value: integer
+      implementation:
+        javascript:
+            - events:
+                - name: create
+                  script: "(function () {\r\n    this.getHub('value').set(0);\r\n})"
+              hubs:
+                - name: reset
+                  script: "(function () {\r\n    this.getHub('value').set(0);\r\n})"
+                - name: increment
+                  script: "(function () {\r\n    const valueHub = this.getHub('value');\r\n    \r\n    const oldValue = valueHub.get();\r\n    const newValue = oldValue + 1;\r\n    valueHub.set(newValue);\r\n\r\n    return newValue;\r\n})"
+                - name: value
+                  script: "(function (val) {\r\n    console.log(val);\r\n})"
+    - name: Random
+      description: Random data generator.
+      constructor: []
+      interface:
+        hubs:
+            - description: Returns a random float number between 0 and 1.
+              direction: in
+              input: []
+              name: randFloat
+              output:
+                - name: r
+                  description: Random number between 0 and 1.
+                  value: float
+              type: pipe
+            - description: Returns a random string of lower (a-z) and uppercase (A-Z) letters and digits (0-9) of length n.
+              direction: in
+              input:
+                - name: length
+                  description: Length of the requested random string.
+                  value: integer
+              name: randString
+              output:
+                - name: r
+                  description: Random string.
+                  value: string
+              type: pipe
+      implementation:
+        javascript:
+            - events: []
+              hubs:
+                - name: randFloat
+                  script: |-
+                    () => {
+                      return Math.random();
+                    }
+                - name: randString
+                  script: "(n) => {\r\n  let result = '';\r\n  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';\r\n\r\n  for (let i = 0; i < n; i++) {\r\n    result += characters.charAt(Math.floor(Math.random() * characters.length));\r\n  }\r\n\r\n  return result;\r\n}\r\n"
+models: []

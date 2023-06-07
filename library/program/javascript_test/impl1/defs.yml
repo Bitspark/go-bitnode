@@ -1,0 +1,52 @@
+name: test
+
+types: [ ]
+
+interfaces:
+  - name: Pipe
+    hubs:
+      - name: in
+        value:
+          value: float
+        type: channel
+        direction: in
+      - name: out
+        value:
+          value: float
+        type: channel
+        direction: out
+
+blueprints:
+  - name: Doubler
+    interface: $Pipe
+    implementation:
+      javascript:
+        - hubs:
+            - name: in
+              script: |
+                (function (val) {
+                  const hub = this.getHub('out');
+                  hub.emit(2 * val);
+                })
+
+  - name: Tripler
+    interface: $Pipe
+    implementation:
+      javascript:
+        - hubs:
+            - name: in
+              script: |
+                (function (val) {
+                  const hub = this.getHub('out');
+                  hub.pushOut(3 * val);
+                })
+
+  - name: Chain
+    interface: $Pipe
+    implementation:
+      javascript:
+        - events:
+            - name: create
+              script:
+                const doubler = new Doubler();
+                const tripler = new Tripler();

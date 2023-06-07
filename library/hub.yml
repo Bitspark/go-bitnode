@@ -1,0 +1,286 @@
+name: hub
+description: The main domain.
+permissions:
+    owner: "0000000000000000000000000000"
+    admin:
+        public: false
+        auth: false
+        users: []
+        groups: []
+    extend:
+        public: false
+        auth: true
+        users: []
+        groups: []
+    view:
+        public: true
+        auth: false
+        users: []
+        groups: []
+types:
+    - name: type
+      description: A Bitspark type.
+      permissions:
+        owner: "0000000000000000000000000000"
+        admin:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        extend:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        view:
+            public: false
+            auth: false
+            users: []
+            groups: []
+      extensions:
+        type: {}
+    - name: interface
+      description: A Bitspark interface.
+      permissions:
+        owner: "0000000000000000000000000000"
+        admin:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        extend:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        view:
+            public: false
+            auth: false
+            users: []
+            groups: []
+      extensions:
+        interface: {}
+    - name: model
+      description: A Bitspark model.
+      permissions:
+        owner: "0000000000000000000000000000"
+        admin:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        extend:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        view:
+            public: false
+            auth: false
+            users: []
+            groups: []
+      extensions:
+        model: {}
+    - name: blueprint
+      description: A Bitspark blueprint.
+      permissions:
+        owner: "0000000000000000000000000000"
+        admin:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        extend:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        view:
+            public: false
+            auth: false
+            users: []
+            groups: []
+      mapOf:
+        name:
+            leaf: string
+      extensions:
+        blueprint:
+            description: ""
+            hubs: null
+    - name: system
+      description: A Bitspark system.
+      leaf: string
+      permissions:
+        owner: "0000000000000000000000000000"
+        admin:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        extend:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        view:
+            public: true
+            auth: false
+            users: []
+            groups: []
+      extensions:
+        system:
+            description: ""
+            hubs: null
+    - name: id
+      description: An object identifier including host system.
+      leaf: string
+      permissions:
+        owner: "0000000000000000000000000000"
+        admin:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        extend:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        view:
+            public: true
+            auth: false
+            users: []
+            groups: []
+      extensions:
+        id: {}
+    - name: systemId
+      description: A system identifier.
+      leaf: string
+      permissions:
+        owner: "0000000000000000000000000000"
+        admin:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        extend:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        view:
+            public: true
+            auth: false
+            users: []
+            groups: []
+      extensions:
+        id:
+            type: system
+    - name: objectId
+      description: An object identifier.
+      leaf: string
+      permissions:
+        owner: "0000000000000000000000000000"
+        admin:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        extend:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        view:
+            public: true
+            auth: false
+            users: []
+            groups: []
+      extensions:
+        id:
+            type: object
+    - name: credentials
+      description: Credentials for an account.
+      permissions:
+        owner: "0000000000000000000000000000"
+        admin:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        extend:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        view:
+            public: false
+            auth: false
+            users: []
+            groups: []
+      mapOf:
+        authority:
+            leaf: string
+        groups:
+            listOf:
+                reference: id
+        signature:
+            leaf: string
+        timestamp:
+            leaf: integer
+        user:
+            mapOf:
+                id:
+                    reference: id
+                name:
+                    leaf: string
+      extensions:
+        credentials: {}
+interfaces: []
+blueprints: []
+models:
+    - name: Object
+      description: The base object.
+      permissions:
+        owner: "0000000000000000000000000000"
+        admin:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        extend:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        view:
+            public: false
+            auth: false
+            users: []
+            groups: []
+      abstracts: []
+      fields:
+        - model:
+            name: relation
+            description: The base relation.
+            abstracts:
+                - hub.Object#relation
+            fields: []
+          origin: hub.Object
+          target: hub.Object
+        - model:
+            name: name
+            description: The name of the person.
+            abstracts:
+                - hub.Object#relation
+            fields: []
+          origin: hub.Object
+          target: hub.Object
+        - model:
+            name: wohnort
+            description: ""
+            abstracts:
+                - hub.Object#relation
+            fields: []
+          origin: hub.Object
+          target: hub.Object

@@ -1,0 +1,7 @@
+name: program
+description: ""
+types: []
+interfaces:
+    - name: Program
+      description: Interface for systems representing running computer programs.
+blueprints: []

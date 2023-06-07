@@ -1,0 +1,118 @@
+name: os
+description: ""
+permissions:
+  view:
+    public: true
+types: []
+interfaces:
+    - name: OperatingSystem
+      description: A hologram representing an operating system instance.
+      hubs:
+        - name: hostname
+          description: Hostname of the computer.
+          type: value
+          value:
+            value:
+              leaf: string
+          direction: out
+        - name: operatingSystem
+          description: Name of the operating system.
+          type: value
+          value:
+            name: operatingSystem
+            description: Name of the operating system.
+            value:
+              leaf: string
+          direction: out
+        - name: memory
+          description: Virtual memory in bytes.
+          type: value
+          value:
+            value:
+              mapOf:
+                total:
+                  leaf: integer
+                free:
+                  leaf: integer
+          direction: out
+        - name: cpus
+          description: CPUs of the computer.
+          type: value
+          value:
+            value:
+              listOf:
+                mapOf:
+                  cpu:
+                    leaf: integer
+                  cores:
+                    leaf: integer
+                  model:
+                    leaf: string
+          direction: out
+        - name: filesystem
+          description: The main filesystem of the operating system.
+          type: value
+          direction: out
+          value:
+            name: filesystem
+            description: The filesystem.
+            value:
+              reference: hub.system
+              extensions:
+                system: Filesystem
+        - name: restart
+          description: Channel triggering a restart.
+          type: channel
+          direction: both
+          value:
+            name: options
+            description: Restart options.
+            value:
+              mapOf:
+                force:
+                  description: Forces an instant restart, not waiting for programs to finish gracefully.
+                  leaf: boolean
+
+    - name: Filesystem
+      description: A filesystem.
+      hubs: []
+
+    - name: Process
+      description: A computer process.
+      hubs:
+        - name: id
+          description: ID of the process (PID).
+          type: value
+          value:
+            value:
+              leaf: integer
+          direction: out
+        - name: name
+          description: Name of the process.
+          type: value
+          value:
+            value:
+              leaf: string
+          direction: out
+
+    - name: Filesystem
+      description: A computer filesystem.
+      hubs:
+        - name: name
+          description: Name of the filesystem.
+          type: value
+          value:
+            value:
+              leaf: string
+          direction: out
+
+blueprints:
+    - name: OperatingSystem
+      description: The operating system instance.
+      constructor: []
+      interface:
+        extends:
+            - OperatingSystem
+
+      implementation:
+        os: [{}]
