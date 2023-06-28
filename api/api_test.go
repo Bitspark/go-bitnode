@@ -4,11 +4,7 @@ import (
 	"context"
 	"github.com/Bitspark/go-bitnode/api/wsApi"
 	"github.com/Bitspark/go-bitnode/bitnode"
-	"github.com/Bitspark/go-bitnode/library"
-	libMeta "github.com/Bitspark/go-bitnode/library/meta"
-	libOS "github.com/Bitspark/go-bitnode/library/os"
-	libProgram "github.com/Bitspark/go-bitnode/library/program"
-	libTime "github.com/Bitspark/go-bitnode/library/time"
+	"github.com/Bitspark/go-bitnode/factories"
 	"github.com/Bitspark/go-bitnode/store"
 	"gopkg.in/yaml.v3"
 	"strings"
@@ -21,12 +17,12 @@ func testClient(t *testing.T, rootSystem string, addr string) (*bitnode.NativeNo
 	dom := bitnode.NewDomain()
 	conns := wsApi.NewNodeConns(node, addr)
 
-	node.AddMiddlewares(library.GetMiddlewares())
+	node.AddMiddlewares(factories.GetMiddlewares())
 
-	_ = node.AddFactory(libTime.NewTimeFactory())
-	_ = node.AddFactory(libProgram.NewJSFactory(dom))
-	_ = node.AddFactory(libOS.NewOSFactory())
-	_ = node.AddFactory(libMeta.NewNodeFactory())
+	_ = node.AddFactory(factories.NewTimeFactory())
+	_ = node.AddFactory(factories.NewJSFactory(dom))
+	_ = node.AddFactory(factories.NewNodeFactory())
+	_ = node.AddFactory(factories.NewOSFactory())
 	_ = node.AddFactory(wsApi.NewWSFactory(conns))
 
 	hubDom, err := dom.AddDomain("hub")
@@ -435,7 +431,7 @@ func TestChangeMeta__Name(t *testing.T) {
 	}
 }
 
-func TestChangeMeta__Status_Message(t *testing.T) {
+func TestChangeMeta__Status1(t *testing.T) {
 	snode, sconns, _ := testClient(t, "", "ws://127.0.0.1:21145")
 	_, cconns, _ := testClient(t, "", "")
 
@@ -463,19 +459,14 @@ func TestChangeMeta__Status_Message(t *testing.T) {
 	time.Sleep(250 * time.Millisecond)
 
 	sys1.SetStatus(1)
-	sys1.SetMessage("Hello World!")
 
 	time.Sleep(250 * time.Millisecond)
 
 	if clt1.Status() != 1 {
 		t.Fatal(clt1.Status())
 	}
-	if clt1.Message() != "Hello World!" {
-		t.Fatal(clt1.Message())
-	}
 
 	clt1.SetStatus(2)
-	clt1.SetMessage("Bye World!")
 
 	time.Sleep(250 * time.Millisecond)
 
@@ -483,9 +474,6 @@ func TestChangeMeta__Status_Message(t *testing.T) {
 
 	if sys1.Status() != 1 {
 		t.Fatal(sys1.Status())
-	}
-	if sys1.Message() != "Hello World!" {
-		t.Fatal(sys1.Message())
 	}
 }
 

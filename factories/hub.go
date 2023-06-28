@@ -1,4 +1,4 @@
-package library
+package factories
 
 import (
 	"fmt"
@@ -8,7 +8,6 @@ import (
 func GetMiddlewares() bitnode.Middlewares {
 	mws := bitnode.Middlewares{}
 	mws.PushBack(NewSystemMiddleware())
-	mws.PushBack(NewModelMiddleware())
 	mws.PushBack(NewSparkableMiddleware())
 	mws.PushBack(NewInterfaceMiddleware())
 	mws.PushBack(NewTypeMiddleware())
@@ -33,33 +32,15 @@ func (f *SystemMiddleware) Name() string {
 }
 
 func (f *SystemMiddleware) Middleware(ext any, val bitnode.HubItem, out bool) (bitnode.HubItem, error) {
+	if val == nil {
+		return nil, nil
+	}
 	//i := ext.(*bitnode.Interface)
 	s := val.(bitnode.System)
 	//if err := s.Interface().Contains(i); err != nil {
 	//	return nil, err
 	//}
 	return s, nil
-}
-
-// The Model middleware.
-
-type ModelMiddleware struct {
-}
-
-var _ bitnode.Middleware = &ModelMiddleware{}
-
-func NewModelMiddleware() *ModelMiddleware {
-	return &ModelMiddleware{}
-}
-
-func (f *ModelMiddleware) Name() string {
-	return "model"
-}
-
-func (f *ModelMiddleware) Middleware(ext any, val bitnode.HubItem, out bool) (bitnode.HubItem, error) {
-	tp := val.(*bitnode.Model)
-	// TODO: Check
-	return tp, nil
 }
 
 // The Sparkable middleware.

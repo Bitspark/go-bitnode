@@ -8,7 +8,6 @@ import (
 	"log"
 	"os"
 	"reflect"
-	"strings"
 )
 
 // Get type
@@ -115,17 +114,6 @@ type RawType struct {
 	Domain string `json:"domain,omitempty" yaml:"-"`
 }
 
-type IDType struct {
-	// Model the corresponding object should be an instance of.
-	Model string `json:"model,omitempty" yaml:"model,omitempty"`
-
-	// Full indicates that the ID should be a full ID having both a SystemID and ObjectID.
-	Full bool `json:"full" yaml:"full"`
-
-	// model is the corresponding model.
-	model *Model
-}
-
 type TypeExtension any
 
 func (t *RawType) Save(dom *Domain) error {
@@ -133,14 +121,14 @@ func (t *RawType) Save(dom *Domain) error {
 	if err != nil {
 		return err
 	}
-	chDefsBytes, err := os.ReadFile(tp.filePath)
+	chDefsBytes, err := os.ReadFile(tp.FilePath)
 	if err != nil {
-		return fmt.Errorf("reading definitions from %s: %v", tp.filePath, err)
+		return fmt.Errorf("reading definitions from %s: %v", tp.FilePath, err)
 	}
 
 	defs := Domain{}
 	if err := yaml.Unmarshal(chDefsBytes, &defs); err != nil {
-		return fmt.Errorf("parsing definitions from %s: %v", tp.filePath, err)
+		return fmt.Errorf("parsing definitions from %s: %v", tp.FilePath, err)
 	}
 
 	for _, tp2 := range defs.Types {
@@ -150,9 +138,9 @@ func (t *RawType) Save(dom *Domain) error {
 	}
 
 	if yamlBts, err := yaml.Marshal(defs); err != nil {
-		return fmt.Errorf("parsing definitions from %s: %v", tp.filePath, err)
+		return fmt.Errorf("parsing definitions from %s: %v", tp.FilePath, err)
 	} else {
-		if err := os.WriteFile(tp.filePath, yamlBts, os.ModePerm); err != nil {
+		if err := os.WriteFile(tp.FilePath, yamlBts, os.ModePerm); err != nil {
 			return err
 		}
 	}
@@ -161,15 +149,6 @@ func (t *RawType) Save(dom *Domain) error {
 }
 
 func (t *RawType) Compile(dom *Domain, domName string, resolve bool, rootType *Type) (*RawType, error) {
-	if t.Name != "" {
-		if t.Name[0] < 'a' || t.Name[0] > 'z' {
-			return nil, fmt.Errorf("types names must start with a lower character (a-z)")
-		}
-		if !util.CheckString(util.CharsAlphaLowerNum, t.Name, false) {
-			return nil, fmt.Errorf("types name must not contain spaces, dashes, underscores or slashes")
-		}
-	}
-
 	compiled := t.Copy()
 
 	// Recursive compile
@@ -178,10 +157,10 @@ func (t *RawType) Compile(dom *Domain, domName string, resolve bool, rootType *T
 		compiled.MapOf = map[string]*RawType{}
 		for k, ct := range t.MapOf {
 			if k[0] < 'a' || k[0] > 'z' {
-				return nil, fmt.Errorf("map keys names must start with a lower character (a-z)")
+				return nil, fmt.Errorf("map keys names must start with a lower case character (a-z)")
 			}
-			if strings.ContainsAny(k, "-/_ ") {
-				return nil, fmt.Errorf("map keys must not contain spaces, dashes, underscores or slashes")
+			if !util.IsAlphanumeric(k) {
+				return nil, fmt.Errorf("map keys must not contain special characters")
 			}
 			if ctt, err := ct.Compile(dom, domName, resolve, rootType); err != nil {
 				return nil, err

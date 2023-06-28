@@ -193,6 +193,7 @@ func (hc *NodeConns) ReconnectClient(node string, cid string, remoteID bitnode.S
 		cl := &Client{
 			NativeSystem: native,
 			cid:          cid,
+			remoteNode:   node,
 			remoteID:     remoteID,
 			created:      time.Now(),
 			server:       server,
@@ -201,6 +202,8 @@ func (hc *NodeConns) ReconnectClient(node string, cid string, remoteID bitnode.S
 			middlewares:  hc.node.Middlewares(),
 			attached:     false,
 		}
+
+		native.SetExtension("ws", &ClientExt{Client: cl})
 
 		hc.queueMux.Lock()
 		queuedClients, _ := hc.queuedClients[node]
@@ -224,13 +227,16 @@ func (hc *NodeConns) ReconnectClient(node string, cid string, remoteID bitnode.S
 		if cl, ok = conn.clients[cid]; ok {
 			conn.clientsMux.Unlock()
 			cl.conn = conn
+			cl.remoteNode = node
 			cl.creds = creds
+			cl.NativeSystem = native
 		} else {
 			conn.clientsMux.Unlock()
 			cl = &Client{
 				NativeSystem: native,
 				cid:          cid,
 				conn:         conn,
+				remoteNode:   node,
 				remoteID:     remoteID,
 				created:      time.Now(),
 				server:       server,
@@ -243,6 +249,8 @@ func (hc *NodeConns) ReconnectClient(node string, cid string, remoteID bitnode.S
 			conn.clients[cl.cid] = cl
 			conn.clientsMux.Unlock()
 		}
+
+		native.SetExtension("ws", &ClientExt{Client: cl})
 
 		if !cl.server {
 			if err := conn.connectClient(cl); err != nil {
@@ -267,6 +275,7 @@ func (hc *NodeConns) AcceptClient(node string, cid string) (*Client, error) {
 		c := &Client{
 			cid:         cid,
 			created:     time.Now(),
+			remoteNode:  node,
 			conn:        h,
 			server:      true,
 			incomingIDs: map[string]bool{},
@@ -343,7 +352,7 @@ func (c *NodeConn) Handle() {
 			continue
 		}
 		client.SetStatus(bitnode.SystemStatusDisconnected)
-		client.SetMessage("Connection lost")
+		client.LogInfo("Connection lost")
 	}
 
 	if c.remoteAddress == "" {
@@ -373,6 +382,7 @@ func (c *NodeConn) AddClient() (*Client, error) {
 	cl := &Client{
 		cid:         util.RandomString(util.CharsAlphaNum, 8),
 		created:     time.Now(),
+		remoteNode:  c.node,
 		conn:        c,
 		server:      false,
 		incomingIDs: map[string]bool{},
@@ -590,7 +600,7 @@ func (c *NodeConn) takeOver(econn *NodeConn) {
 
 // A NodeMessage is a SystemMessage sent from a node to another node.
 type NodeMessage struct {
-	Cmd       string      `json:"cmd"`
+	Cmd       string      `json:"cmd,omitempty"`
 	Request   string      `json:"request,omitempty"`
 	Reference string      `json:"reference,omitempty"`
 	Payload   NodePayload `json:"payload,omitempty"`
@@ -832,8 +842,12 @@ func (pc *NodePayloadClient) UnmarshalJSON(data []byte) error {
 		pc.Payload = &SystemMessageLifecycleCreate{}
 	case "load":
 		pc.Payload = &SystemMessageLifecycleLoad{}
-	case "meta":
-		pc.Payload = &SystemMessageLifecycleMeta{}
+	case "kill":
+		pc.Payload = &SystemMessageLifecycleKill{}
+	case "name":
+		pc.Payload = &SystemMessageLifecycleName{}
+	case "status":
+		pc.Payload = &SystemMessageLifecycleStatus{}
 	default:
 		return fmt.Errorf("unknown system command: %s", hms.Cmd)
 	}

@@ -144,12 +144,9 @@ type Domain struct {
 	// Blueprints inside this domain.
 	Sparkables []*Sparkable `json:"blueprints" yaml:"blueprints"`
 
-	// Models inside this domain.
-	Models []*Model `json:"models" yaml:"models"`
+	FilePath string `json:"-" yaml:"-"`
 
 	implementations map[string][]Implementation
-
-	filePath string
 }
 
 func NewDomain() *Domain {
@@ -216,8 +213,8 @@ func (dom *Domain) LoadFromDir(dir string, recursive bool) error {
 }
 
 func (dom *Domain) LoadFromFile(file string) error {
-	if dom.filePath != "" {
-		return fmt.Errorf("already have path when loading %s: %s", file, dom.filePath)
+	if dom.FilePath != "" {
+		return fmt.Errorf("already have path when loading %s: %s", file, dom.FilePath)
 	}
 
 	chDefsBytes, err := os.ReadFile(file)
@@ -237,7 +234,7 @@ func (dom *Domain) LoadFromFile(file string) error {
 		return err
 	}
 
-	dom.filePath = file
+	dom.FilePath = file
 
 	return nil
 }
@@ -267,11 +264,6 @@ func (dom *Domain) Compile() error {
 		impls = append(impls, m)
 		dom.implementations[m.Name] = impls
 	}
-	for _, i := range dom.Models {
-		if err := i.Compile(dom, dom.FullName, true); err != nil {
-			return fmt.Errorf("compile interface %s in domain %s: %v", i.Name, dom.FullName, err)
-		}
-	}
 	for _, d := range dom.Domains {
 		if err := d.Compile(); err != nil {
 			return err
@@ -297,9 +289,12 @@ func (dom *Domain) Root() *Domain {
 
 func (dom *Domain) Save() error {
 	if yamlBts, err := yaml.Marshal(*dom); err != nil {
-		return fmt.Errorf("parsing definitions from %s: %v", dom.filePath, err)
+		return fmt.Errorf("parsing definitions from %s: %v", dom.FilePath, err)
 	} else {
-		if err := os.WriteFile(dom.filePath, yamlBts, os.ModePerm); err != nil {
+		if err := os.MkdirAll(path.Dir(dom.FilePath), os.ModePerm); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dom.FilePath, yamlBts, os.ModePerm); err != nil {
 			return err
 		}
 	}
@@ -307,20 +302,55 @@ func (dom *Domain) Save() error {
 	return nil
 }
 
+func (dom *Domain) Delete() error {
+	if dom.FilePath == "" {
+		return nil
+	}
+
+	return os.RemoveAll(path.Dir(dom.FilePath))
+}
+
+func (dom *Domain) SaveAll() error {
+	if err := dom.Save(); err != nil {
+		return err
+	}
+
+	for _, c := range dom.Domains {
+		if err := c.SaveAll(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (dom *Domain) AddFullDomain(domPath string, fullName string) error {
+	if domPath == "" {
+		domPath = path.Dir(dom.FilePath)
+	}
+
+	doms := strings.Split(fullName, DomSep)
+	d := doms[0]
+
+	nd, err := dom.GetDomain(dom.FullName + DomSep + d)
+	if err != nil {
+		nd, err = dom.AddDomain(d)
+		if err != nil {
+			return err
+		} else {
+			nd.FilePath = path.Join(domPath, fmt.Sprintf("%s.yml", d))
+		}
+	}
+
+	if len(doms) <= 1 {
+		return nil
+	}
+
+	return nd.AddFullDomain(path.Join(domPath, doms[1]), strings.Join(doms[1:], DomSep))
+}
+
 func (dom *Domain) AddDomain(name string) (*Domain, error) {
-	if _, err := dom.GetDomain(name); err == nil {
-		return nil, fmt.Errorf("already have a sub-domain %s", name)
-	}
-	d := NewDomain()
-	if dom.FullName != "" {
-		d.FullName = dom.FullName + DomSep + name
-	} else {
-		d.FullName = name
-	}
-	d.Name = name
-	d.Parent = dom
-	dom.Domains = append(dom.Domains, d)
-	return d, nil
+	return dom.addDomain(name)
 }
 
 func (dom *Domain) GetDomain(name string) (*Domain, error) {
@@ -334,6 +364,15 @@ func (dom *Domain) CreateDomain(name string, perms Permissions) error {
 		return err
 	}
 	return d.createDomain(frags[len(frags)-1], perms)
+}
+
+func (dom *Domain) DeleteDomain(name string) error {
+	frags := strings.Split(name, DomSep)
+	d, err := dom.getDomain(frags[:len(frags)-1])
+	if err != nil {
+		return err
+	}
+	return d.deleteDomain(frags[len(frags)-1])
 }
 
 func (dom *Domain) MustGetType(name string) *Type {
@@ -353,11 +392,11 @@ func (dom *Domain) GetType(name string) (*Type, error) {
 	return d.getType(frags[len(frags)-1])
 }
 
-func (dom *Domain) CreateType(name string, perms Permissions) error {
+func (dom *Domain) CreateType(name string, perms Permissions) (*Type, error) {
 	frags := strings.Split(name, DomSep)
 	d, err := dom.getDomain(frags[:len(frags)-1])
 	if err != nil {
-		return err
+		return nil, err
 	}
 	return d.createType(frags[len(frags)-1], perms)
 }
@@ -380,11 +419,11 @@ func (dom *Domain) GetInterface(name string) (*Interface, error) {
 	return d.getInterface(frags[len(frags)-1])
 }
 
-func (dom *Domain) CreateInterface(name string, perms Permissions) error {
+func (dom *Domain) CreateInterface(name string, perms Permissions) (*Interface, error) {
 	frags := strings.Split(name, DomSep)
 	d, err := dom.getDomain(frags[:len(frags)-1])
 	if err != nil {
-		return err
+		return nil, err
 	}
 	return d.createInterface(frags[len(frags)-1], perms)
 }
@@ -407,11 +446,11 @@ func (dom *Domain) GetSparkable(name string) (*Sparkable, error) {
 	return d.getSparkable(frags[len(frags)-1])
 }
 
-func (dom *Domain) CreateSparkable(name string, perms Permissions) error {
+func (dom *Domain) CreateSparkable(name string, perms Permissions) (*Sparkable, error) {
 	frags := strings.Split(name, DomSep)
 	d, err := dom.getDomain(frags[:len(frags)-1])
 	if err != nil {
-		return err
+		return nil, err
 	}
 	return d.createSparkable(frags[len(frags)-1], perms)
 }
@@ -423,33 +462,6 @@ func (dom *Domain) DeleteSparkable(name string) error {
 		return err
 	}
 	return d.deleteSparkable(frags[len(frags)-1])
-}
-
-func (dom *Domain) GetModel(name string) (*Model, error) {
-	frags := strings.Split(name, DomSep)
-	d, err := dom.getDomain(frags[:len(frags)-1])
-	if err != nil {
-		return nil, err
-	}
-	return d.getModel(frags[len(frags)-1])
-}
-
-func (dom *Domain) CreateModel(name string, abstracts []string, perms Permissions) (*Model, error) {
-	frags := strings.Split(name, DomSep)
-	d, err := dom.getDomain(frags[:len(frags)-1])
-	if err != nil {
-		return nil, err
-	}
-	return d.createModel(frags[len(frags)-1], abstracts, perms)
-}
-
-func (dom *Domain) DeleteModel(name string) error {
-	frags := strings.Split(name, DomSep)
-	d, err := dom.getDomain(frags[:len(frags)-1])
-	if err != nil {
-		return err
-	}
-	return d.deleteModel(frags[len(frags)-1])
 }
 
 // Private
@@ -479,11 +491,6 @@ func (dom *Domain) addDefinitions(defs Domain) error {
 	}
 	for _, d := range defs.Sparkables {
 		if err := dom.addSparkable(d); err != nil {
-			return err
-		}
-	}
-	for _, m := range defs.Models {
-		if err := dom.addModel(m); err != nil {
 			return err
 		}
 	}
@@ -534,6 +541,40 @@ func (dom *Domain) getSubDomain(frags []string) (*Domain, error) {
 		}
 	}
 	return nil, fmt.Errorf("domain %s not found inside domain %s", frags[0], dom.FullName)
+}
+
+func (dom *Domain) addDomain(name string) (*Domain, error) {
+	if err := checkName(name, 1, 12, false); err != nil {
+		return nil, err
+	}
+	if _, err := dom.GetDomain(name); err == nil {
+		return nil, fmt.Errorf("already have a sub-domain %s", name)
+	}
+	d := NewDomain()
+	if dom.FullName != "" {
+		d.FullName = dom.FullName + DomSep + name
+	} else {
+		d.FullName = name
+	}
+	d.Name = name
+	d.Parent = dom
+	dom.Domains = append(dom.Domains, d)
+	return d, nil
+}
+
+func (dom *Domain) deleteDomain(name string) error {
+	newDomains := []*Domain{}
+	for _, sd := range dom.Domains {
+		if sd.Name == name {
+			if err := sd.Delete(); err != nil {
+				return err
+			}
+			continue
+		}
+		newDomains = append(newDomains, sd)
+	}
+	dom.Domains = newDomains
+	return nil
 }
 
 func (dom *Domain) addType(domType *Type) error {
@@ -605,72 +646,6 @@ func (dom *Domain) getSparkable(name string) (*Sparkable, error) {
 	return nil, fmt.Errorf("sparkable not found in domain %s: %s", dom.FullName, name)
 }
 
-func (dom *Domain) addModel(domModel *Model) error {
-	domModel.Domain = dom.FullName
-	dom.Models = append(dom.Models, domModel)
-	if domModel.Permissions == nil {
-		domModel.Permissions = &Permissions{
-			Owner:  ID{},
-			Admin:  PermissionGroup{},
-			Extend: PermissionGroup{},
-			View:   PermissionGroup{},
-		}
-	}
-	return nil
-}
-
-func (dom *Domain) getModel(name string) (*Model, error) {
-	for _, d := range dom.Models {
-		if d.Name == name {
-			return d, nil
-		}
-	}
-	return nil, fmt.Errorf("model not found in domain %s: %s", dom.FullName, name)
-}
-
-func (dom *Domain) deleteModel(name string) error {
-	newModels := []*Model{}
-	found := false
-	for _, d := range dom.Models {
-		if d.Name == name {
-			found = true
-			continue
-		}
-		newModels = append(newModels, d)
-	}
-	if !found {
-		return fmt.Errorf("model not found in domain %s: %s", dom.FullName, name)
-	}
-	dom.Models = newModels
-	_ = dom.Save()
-	return nil
-}
-
-func (dom *Domain) createModel(name string, abstracts []string, perms Permissions) (*Model, error) {
-	newModels := []*Model{}
-	for _, d := range dom.Models {
-		if d.Name == name {
-			return nil, fmt.Errorf("this model already exists")
-		}
-		newModels = append(newModels, d)
-	}
-	model := &Model{
-		RawModel: RawModel{
-			Name:        name,
-			Domain:      dom.FullName,
-			Abstracts:   abstracts,
-			Permissions: &perms,
-		},
-	}
-	if err := model.Compile(dom, dom.FullName, true); err != nil {
-		return nil, err
-	}
-	newModels = append(newModels, model)
-	dom.Models = newModels
-	_ = dom.Save()
-	return model, nil
-}
-
 func (dom *Domain) deleteSparkable(name string) error {
 	newSparkables := []*Sparkable{}
 	found := false
@@ -689,11 +664,14 @@ func (dom *Domain) deleteSparkable(name string) error {
 	return nil
 }
 
-func (dom *Domain) createSparkable(name string, perms Permissions) error {
+func (dom *Domain) createSparkable(name string, perms Permissions) (*Sparkable, error) {
+	if err := checkName(name, 1, 24, true); err != nil {
+		return nil, err
+	}
 	newSparkables := []*Sparkable{}
 	for _, d := range dom.Sparkables {
 		if d.Name == name {
-			return fmt.Errorf("this sparkable already exists")
+			return nil, fmt.Errorf("this sparkable already exists")
 		}
 		newSparkables = append(newSparkables, d)
 	}
@@ -705,15 +683,18 @@ func (dom *Domain) createSparkable(name string, perms Permissions) error {
 		},
 	}
 	if err := sparkable.Compile(dom, dom.FullName, true); err != nil {
-		return err
+		return nil, err
 	}
 	newSparkables = append(newSparkables, sparkable)
 	dom.Sparkables = newSparkables
 	_ = dom.Save()
-	return nil
+	return sparkable, nil
 }
 
 func (dom *Domain) createDomain(name string, perms Permissions) error {
+	if err := checkName(name, 1, 12, false); err != nil {
+		return err
+	}
 	newDomains := []*Domain{}
 	for _, d := range dom.Domains {
 		if d.Name == name {
@@ -726,12 +707,12 @@ func (dom *Domain) createDomain(name string, perms Permissions) error {
 		Name:        name,
 		Permissions: &perms,
 	}
-	if dom.filePath != "" {
-		baseDir := path.Join(path.Dir(dom.filePath), name)
+	if dom.FilePath != "" {
+		baseDir := path.Join(path.Dir(dom.FilePath), name)
 		if err := os.MkdirAll(baseDir, os.ModePerm); err != nil {
 			return err
 		}
-		domain.filePath = path.Join(baseDir, name+".yml")
+		domain.FilePath = path.Join(baseDir, name+".yml")
 	}
 	if err := domain.Compile(); err != nil {
 		return err
@@ -761,11 +742,14 @@ func (dom *Domain) deleteInterface(name string) error {
 	return nil
 }
 
-func (dom *Domain) createInterface(name string, perms Permissions) error {
+func (dom *Domain) createInterface(name string, perms Permissions) (*Interface, error) {
+	if err := checkName(name, 1, 24, true); err != nil {
+		return nil, err
+	}
 	newInterfaces := []*Interface{}
 	for _, d := range dom.Interfaces {
 		if d.Name == name {
-			return fmt.Errorf("this interface already exists")
+			return nil, fmt.Errorf("this interface already exists")
 		}
 		newInterfaces = append(newInterfaces, d)
 	}
@@ -777,12 +761,12 @@ func (dom *Domain) createInterface(name string, perms Permissions) error {
 		},
 	}
 	if err := interf.Compile(dom, dom.FullName, true); err != nil {
-		return err
+		return nil, err
 	}
 	newInterfaces = append(newInterfaces, interf)
 	dom.Interfaces = newInterfaces
 	_ = dom.Save()
-	return nil
+	return interf, nil
 }
 
 func (dom *Domain) deleteType(name string) error {
@@ -803,11 +787,14 @@ func (dom *Domain) deleteType(name string) error {
 	return nil
 }
 
-func (dom *Domain) createType(name string, perms Permissions) error {
+func (dom *Domain) createType(name string, perms Permissions) (*Type, error) {
+	if err := checkName(name, 1, 24, false); err != nil {
+		return nil, err
+	}
 	newTypes := []*Type{}
 	for _, d := range dom.Types {
 		if d.Name == name {
-			return fmt.Errorf("this type already exists")
+			return nil, fmt.Errorf("this type already exists")
 		}
 		newTypes = append(newTypes, d)
 	}
@@ -819,10 +806,32 @@ func (dom *Domain) createType(name string, perms Permissions) error {
 		},
 	}
 	if err := tp.Compile(dom, dom.FullName, true); err != nil {
-		return err
+		return nil, err
 	}
 	newTypes = append(newTypes, tp)
 	dom.Types = newTypes
 	_ = dom.Save()
+	return tp, nil
+}
+
+func checkName(name string, minLength int, maxLength int, capital bool) error {
+	if len(name) < minLength {
+		return fmt.Errorf("name must be at longer than %d characters", minLength)
+	}
+	if len(name) > maxLength {
+		return fmt.Errorf("name must be be shorter than %d characters", maxLength)
+	}
+	if capital {
+		if name[0] < 'A' || name[0] > 'Z' {
+			return fmt.Errorf("name must start with an upper case character (A-Z)")
+		}
+	} else {
+		if name[0] < 'a' || name[0] > 'z' {
+			return fmt.Errorf("name must start with a lower case character (a-z)")
+		}
+	}
+	if !util.IsAlphanumeric(name) {
+		return fmt.Errorf("name must not contain special characters")
+	}
 	return nil
 }

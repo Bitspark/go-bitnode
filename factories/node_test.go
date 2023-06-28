@@ -1,23 +1,22 @@
-package libMeta
+package factories
 
 import (
 	"github.com/Bitspark/go-bitnode/bitnode"
-	"github.com/Bitspark/go-bitnode/library"
 	"gopkg.in/yaml.v3"
 	"testing"
 	"time"
 )
 
-func testNode(t *testing.T) (*bitnode.NativeNode, *bitnode.Domain) {
+func testNodeNode(t *testing.T) (*bitnode.NativeNode, *bitnode.Domain) {
 	h := bitnode.NewNode()
 	dom := bitnode.NewDomain()
-	h.AddMiddlewares(library.GetMiddlewares())
+	h.AddMiddlewares(GetMiddlewares())
 	_ = h.AddFactory(NewNodeFactory())
 	hubDom, err := dom.AddDomain("hub")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := hubDom.LoadFromDir("../", true); err != nil {
+	if err := hubDom.LoadFromDir("../library", true); err != nil {
 		t.Fatal(err)
 	}
 	if err := dom.Compile(); err != nil {
@@ -26,8 +25,8 @@ func testNode(t *testing.T) (*bitnode.NativeNode, *bitnode.Domain) {
 	return h, dom
 }
 
-func TestNodeSystem1(t *testing.T) {
-	h, dom := testNode(t)
+func TestNodeNodeSystem1(t *testing.T) {
+	h, dom := testNodeNode(t)
 
 	creds := bitnode.Credentials{}
 
@@ -81,9 +80,9 @@ func TestNodeSystem1(t *testing.T) {
 	}
 }
 
-func TestNodeSystem2(t *testing.T) {
-	h, dom := testNode(t)
-	h2, _ := testNode(t)
+func TestNodeNodeSystem2(t *testing.T) {
+	h, dom := testNodeNode(t)
+	h2, _ := testNodeNode(t)
 
 	creds := bitnode.Credentials{}
 
@@ -176,8 +175,8 @@ hubs:
 	}
 }
 
-func TestNodeSystem__Addresses1(t *testing.T) {
-	h, dom := testNode(t)
+func TestNodeNodeSystem__Addresses1(t *testing.T) {
+	h, dom := testNodeNode(t)
 
 	creds := bitnode.Credentials{}
 

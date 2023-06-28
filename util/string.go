@@ -2,6 +2,7 @@ package util
 
 import (
 	"math/rand"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -38,4 +39,9 @@ func CheckString(alphabet string, str string, sensitive bool) bool {
 		}
 	}
 	return true
+}
+
+func IsAlphanumeric(s string) bool {
+	match, _ := regexp.MatchString("^[a-zA-Z0-9]+$", s)
+	return match
 }

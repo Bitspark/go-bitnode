@@ -1,4 +1,4 @@
-package libOS
+package factories
 
 import (
 	"fmt"
@@ -45,7 +45,7 @@ var _ bitnode.Implementation = &OSImpl{}
 func (m *OSImpl) Implement(node *bitnode.NativeNode, sys bitnode.System) error {
 	sys.AddExtension("os", &osExtension{m: m})
 
-	sys.SetMessage("Implementing OperatingSystem")
+	sys.LogInfo("Implementing OperatingSystem")
 
 	sys.AddCallback(bitnode.LifecycleLoad, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
 		hostnameHub := sys.GetHub("hostname")
@@ -57,7 +57,7 @@ func (m *OSImpl) Implement(node *bitnode.NativeNode, sys bitnode.System) error {
 		hostStat, _ := host.Info()
 
 		if err := hostnameHub.Set("", hostStat.Hostname); err != nil {
-			sys.Error(err)
+			sys.LogError(err)
 		}
 
 		// CPU
@@ -78,7 +78,7 @@ func (m *OSImpl) Implement(node *bitnode.NativeNode, sys bitnode.System) error {
 		}
 
 		if err := cpuHub.Set("", cpus); err != nil {
-			sys.Error(err)
+			sys.LogError(err)
 		}
 
 		// MEMORY
@@ -92,14 +92,14 @@ func (m *OSImpl) Implement(node *bitnode.NativeNode, sys bitnode.System) error {
 					"free":  vmStat.Free,
 				}
 				if err := memoryHub.Set("", memory); err != nil {
-					sys.Error(err)
+					sys.LogError(err)
 				}
 
 				time.Sleep(1 * time.Second)
 			}
 		}()
 
-		sys.SetMessage("OperatingSystem running")
+		sys.LogInfo("OperatingSystem running")
 		sys.SetStatus(bitnode.SystemStatusRunning)
 
 		return nil

@@ -1,15 +1,14 @@
-package libProgram
+package factories
 
 import (
 	"github.com/Bitspark/go-bitnode/bitnode"
-	"github.com/Bitspark/go-bitnode/library"
 	"testing"
 )
 
-func testNode(t *testing.T, dir string) (*bitnode.NativeNode, *bitnode.Domain) {
+func testNodeJS(t *testing.T, dir string) (*bitnode.NativeNode, *bitnode.Domain) {
 	h := bitnode.NewNode()
 	dom := bitnode.NewDomain()
-	h.AddMiddlewares(library.GetMiddlewares())
+	h.AddMiddlewares(GetMiddlewares())
 	_ = h.AddFactory(NewJSFactory(dom))
 	testDom, _ := dom.AddDomain("test")
 	if err := testDom.LoadFromDir(dir, false); err != nil {
@@ -22,7 +21,7 @@ func testNode(t *testing.T, dir string) (*bitnode.NativeNode, *bitnode.Domain) {
 }
 
 func TestJSImpl1(t *testing.T) {
-	h, dom := testNode(t, "./javascript_test/impl1")
+	h, dom := testNodeJS(t, "./javascript_test/impl1")
 
 	doublerImpl, err := dom.GetSparkable("Doubler")
 	if err != nil {
@@ -64,7 +63,7 @@ func TestJSImpl1(t *testing.T) {
 }
 
 func TestJSImpl2(t *testing.T) {
-	h, dom := testNode(t, "./javascript_test/impl2")
+	h, dom := testNodeJS(t, "./javascript_test/impl2")
 
 	use1Impl, err := dom.GetSparkable("UseSquareRoot1")
 	if err != nil {
@@ -120,7 +119,7 @@ func (t *testConsole) Print(msg string) {
 }
 
 func TestJSHelloWorld(t *testing.T) {
-	h, dom := testNode(t, "./javascript_test/helloWorld")
+	h, dom := testNodeJS(t, "./javascript_test/helloWorld")
 
 	hwImpl, err := dom.GetSparkable("HelloWorld")
 	if err != nil {
@@ -150,7 +149,7 @@ func TestJSHelloWorld(t *testing.T) {
 }
 
 func TestJSConstr(t *testing.T) {
-	h, dom := testNode(t, "./javascript_test/constr")
+	h, dom := testNodeJS(t, "./javascript_test/constr")
 
 	hwImpl, err := dom.GetSparkable("Constr")
 	if err != nil {

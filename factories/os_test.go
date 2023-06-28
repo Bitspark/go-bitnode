@@ -1,4 +1,4 @@
-package libOS
+package factories
 
 import (
 	"github.com/Bitspark/go-bitnode/bitnode"
@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-func testNode(t *testing.T, dir string) (*bitnode.NativeNode, *bitnode.Domain) {
+func testNodeOS(t *testing.T, dir string) (*bitnode.NativeNode, *bitnode.Domain) {
 	h := bitnode.NewNode()
 	if err := h.AddFactory(NewOSFactory()); err != nil {
 		t.Fatal(err)
 	}
 	hubDom, _ := bitnode.NewDomain().AddDomain("hub")
-	if err := hubDom.LoadFromDir("../", false); err != nil {
+	if err := hubDom.LoadFromDir("../library/", false); err != nil {
 		t.Fatal(err)
 	}
 	osDom, _ := hubDom.AddDomain("os")
@@ -27,7 +27,7 @@ func testNode(t *testing.T, dir string) (*bitnode.NativeNode, *bitnode.Domain) {
 }
 
 func TestOS1(t *testing.T) {
-	h, dom := testNode(t, "./")
+	h, dom := testNodeOS(t, "../library/os/")
 
 	creds := bitnode.Credentials{}
 
@@ -58,7 +58,7 @@ func TestOS1(t *testing.T) {
 }
 
 func TestOS2(t *testing.T) {
-	h, dom := testNode(t, "./")
+	h, dom := testNodeOS(t, "../library/os/")
 
 	creds := bitnode.Credentials{}
 
@@ -81,7 +81,7 @@ func TestOS2(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h2, dom2 := testNode(t, "./")
+	h2, dom2 := testNodeOS(t, "../library/os/")
 
 	if err := h2.Load(st, dom2); err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestOS2(t *testing.T) {
 }
 
 func TestOS3(t *testing.T) {
-	h, dom := testNode(t, "./")
+	h, dom := testNodeOS(t, "../library/os/")
 
 	creds := bitnode.Credentials{}
 

@@ -1,4 +1,4 @@
-package libProgram
+package factories
 
 import (
 	"errors"
@@ -141,7 +141,7 @@ func (m *JSImpl) Implement(node *bitnode.NativeNode, sys bitnode.System) error {
 	// Status and message
 
 	sys.AddCallback(bitnode.LifecycleLoad, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
-		sys.SetMessage("JavaScript engine running")
+		sys.LogInfo("JavaScript engine running")
 		sys.SetStatus(bitnode.SystemStatusRunning)
 
 		return nil
@@ -222,17 +222,20 @@ func (st *jsState) jsEmit(s bitnode.System) error {
 
 func (st *jsState) jsConsole(s bitnode.System) error {
 	console := map[string]any{
-		"log": func(msg ...any) {
-			s.Log(bitnode.LogDebug, fmt.Sprintf("%v", msg))
+		"debug": func(msg ...any) {
+			s.LogDebug(fmt.Sprintf("%v", msg))
 		},
-		"info": func(msg ...any) {
-			s.Log(bitnode.LogInfo, fmt.Sprintf("%v", msg))
+		"log": func(msg ...any) {
+			s.LogInfo(fmt.Sprintf("%v", msg))
 		},
 		"warn": func(msg ...any) {
-			s.Log(bitnode.LogWarn, fmt.Sprintf("%v", msg))
+			s.LogWarning(fmt.Sprintf("%v", msg))
 		},
 		"error": func(msg ...any) {
-			s.Log(bitnode.LogError, fmt.Sprintf("%v", msg))
+			s.LogError(fmt.Errorf("%v", msg))
+		},
+		"fatal": func(msg ...any) {
+			s.LogFatal(fmt.Errorf("%v", msg))
 		},
 	}
 	if err := st.vm.GlobalObject().Set("console", console); err != nil {

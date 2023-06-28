@@ -22,24 +22,26 @@ type SystemMessageConn struct {
 }
 
 func (msg *SystemMessageConn) HandleClient(client *Client, reference string) error {
-	sys, err := client.conn.conns.node.GetSystemByID(client.creds, bitnode.ParseSystemID(msg.ID))
-	if err != nil {
-		return err
+	if client.NativeSystem == nil {
+		sys, err := client.conn.conns.node.GetSystemByID(client.creds, bitnode.ParseSystemID(msg.ID))
+		if err != nil {
+			return err
+		}
+		client.NativeSystem = sys.Native()
+		client.SetExtension("ws", &ClientExt{Client: client})
 	}
-	client.NativeSystem = sys.Native()
-	client.AddExtension("ws", &clientExt{client: client})
 	client.creds = msg.Credentials
 	client.send("init", &SystemMessageInit{
 		ID:        client.ID(),
 		Name:      client.Name(),
 		Status:    client.Status(),
-		Message:   client.Message(),
 		Interface: client.Interface(),
 		Extends:   client.Extends(),
 	}, reference, false)
 	if err := client.attachSystem(); err != nil {
 		return err
 	}
+	client.Extension("ws").(*ClientExt).Connected = true
 	return nil
 }
 
@@ -76,13 +78,13 @@ func (msg *SystemMessageInit) HandleClient(client *Client, reference string) err
 			return err
 		}
 		client.NativeSystem = sys.Native()
+		client.SetExtension("ws", &ClientExt{Client: client})
 	}
 	if !client.attached {
 		if err := client.attachSystem(); err != nil {
 			return err
 		}
 	}
-	client.AddExtension("ws", &clientExt{client: client})
 
 	client.SetName(msg.Name)
 	client.remoteName = msg.Name
@@ -90,10 +92,9 @@ func (msg *SystemMessageInit) HandleClient(client *Client, reference string) err
 	client.SetStatus(msg.Status)
 	client.remoteStatus = msg.Status
 
-	client.SetMessage(msg.Message)
-	client.remoteMessage = msg.Message
-
 	client.SetExtends(msg.Extends)
+
+	client.Extension("ws").(*ClientExt).Connected = true
 
 	return nil
 }
@@ -224,33 +225,45 @@ func (msg *SystemMessageLifecycleLoad) HandleClient(client *Client, reference st
 	return nil
 }
 
-// Lifecycle Meta
+// Lifecycle Load
 
-type SystemMessageLifecycleMeta struct {
-	Name    *string `json:"name"`
-	Status  *int    `json:"status"`
-	Message *string `json:"message"`
+type SystemMessageLifecycleKill struct {
 }
 
-func (msg *SystemMessageLifecycleMeta) HandleClient(client *Client, reference string) error {
+func (msg *SystemMessageLifecycleKill) HandleClient(client *Client, reference string) error {
+	if err := client.EmitEvent(bitnode.LifecycleKill); err != nil {
+		return err
+	}
+	client.send("", nil, reference, false)
+	return nil
+}
+
+// Lifecycle Name
+
+type SystemMessageLifecycleName struct {
+	Name string `json:"name"`
+}
+
+func (msg *SystemMessageLifecycleName) HandleClient(client *Client, reference string) error {
 	if client.NativeSystem == nil {
 		return nil
 	}
-	if msg.Name != nil {
-		client.SetName(*msg.Name)
-		client.remoteName = *msg.Name
+	client.SetName(msg.Name)
+	client.remoteName = msg.Name
+	return nil
+}
+
+// Lifecycle Status
+
+type SystemMessageLifecycleStatus struct {
+	Status int `json:"status"`
+}
+
+func (msg *SystemMessageLifecycleStatus) HandleClient(client *Client, reference string) error {
+	if client.NativeSystem == nil {
+		return nil
 	}
-	if msg.Status != nil {
-		if !client.server {
-			client.SetStatus(*msg.Status)
-		}
-		client.remoteStatus = *msg.Status
-	}
-	if msg.Message != nil {
-		if !client.server {
-			client.SetMessage(*msg.Message)
-		}
-		client.remoteMessage = *msg.Message
-	}
+	client.SetStatus(msg.Status)
+	client.remoteStatus = msg.Status
 	return nil
 }

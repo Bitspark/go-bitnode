@@ -236,13 +236,11 @@ types:
                     leaf: string
       extensions:
         credentials: {}
-interfaces: []
-blueprints: []
-models:
-    - name: Object
-      description: The base object.
+interfaces:
+    - name: Hologram
+      description: An empty hologram interface.
       permissions:
-        owner: "0000000000000000000000000000"
+        owner: d7b24d22db3fec7a6b42fad8f08a
         admin:
             public: false
             auth: false
@@ -250,37 +248,12 @@ models:
             groups: []
         extend:
             public: false
-            auth: false
+            auth: true
             users: []
             groups: []
         view:
-            public: false
+            public: true
             auth: false
             users: []
             groups: []
-      abstracts: []
-      fields:
-        - model:
-            name: relation
-            description: The base relation.
-            abstracts:
-                - hub.Object#relation
-            fields: []
-          origin: hub.Object
-          target: hub.Object
-        - model:
-            name: name
-            description: The name of the person.
-            abstracts:
-                - hub.Object#relation
-            fields: []
-          origin: hub.Object
-          target: hub.Object
-        - model:
-            name: wohnort
-            description: ""
-            abstracts:
-                - hub.Object#relation
-            fields: []
-          origin: hub.Object
-          target: hub.Object
+blueprints: []

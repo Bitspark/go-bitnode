@@ -1,11 +1,11 @@
-package libWeb
+package factories
 
 import (
 	"github.com/Bitspark/go-bitnode/bitnode"
 	"testing"
 )
 
-func testNode(t *testing.T, dir string) (*bitnode.NativeNode, *bitnode.Domain) {
+func testNodeWeb(t *testing.T, dir string) (*bitnode.NativeNode, *bitnode.Domain) {
 	h := bitnode.NewNode()
 	if err := h.AddFactory(&WebFactory{}); err != nil {
 		t.Fatal(err)
@@ -21,7 +21,7 @@ func testNode(t *testing.T, dir string) (*bitnode.NativeNode, *bitnode.Domain) {
 }
 
 func TestHTTPClientGET1(t *testing.T) {
-	h, dom := testNode(t, "./")
+	h, dom := testNodeWeb(t, "../library/web/")
 
 	creds := bitnode.Credentials{}
 
@@ -49,7 +49,7 @@ func TestHTTPClientGET1(t *testing.T) {
 }
 
 func TestHTTPClientPOST1(t *testing.T) {
-	h, dom := testNode(t, "./")
+	h, dom := testNodeWeb(t, "../library/web/")
 
 	creds := bitnode.Credentials{}
 

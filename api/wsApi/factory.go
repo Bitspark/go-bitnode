@@ -39,7 +39,7 @@ func (f *WSFactory) Implementation(impl bitnode.Implementation) (bitnode.Impleme
 
 type clientImpl struct {
 	CID      string              `json:"cid" yaml:"cid"`
-	Node     string              `json:"string" yaml:"string"`
+	Node     string              `json:"node" yaml:"node"`
 	RemoteID bitnode.SystemID    `json:"remoteId" yaml:"remoteId"`
 	Creds    bitnode.Credentials `json:"credentials" yaml:"credentials"`
 	Server   bool                `json:"server" yaml:"server"`
@@ -68,18 +68,19 @@ func (c *clientImpl) Validate() error {
 	return nil
 }
 
-type clientExt struct {
-	client *Client
+type ClientExt struct {
+	Client    *Client
+	Connected bool
 }
 
-func (c clientExt) Implementation() bitnode.Implementation {
+func (c ClientExt) Implementation() bitnode.Implementation {
 	return &clientImpl{
-		CID:      c.client.cid,
-		Node:     c.client.conn.node,
-		RemoteID: c.client.remoteID,
-		Creds:    c.client.creds,
-		Server:   c.client.server,
+		CID:      c.Client.cid,
+		Node:     c.Client.remoteNode,
+		RemoteID: c.Client.remoteID,
+		Creds:    c.Client.creds,
+		Server:   c.Client.server,
 	}
 }
 
-var _ bitnode.SystemExtension = &clientExt{}
+var _ bitnode.SystemExtension = &ClientExt{}

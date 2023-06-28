@@ -1,4 +1,4 @@
-package libTime
+package factories
 
 import (
 	"github.com/Bitspark/go-bitnode/bitnode"
@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func testNode(t *testing.T, dir string) (*bitnode.NativeNode, *bitnode.Domain) {
+func testNodeTime(t *testing.T, dir string) (*bitnode.NativeNode, *bitnode.Domain) {
 	h := bitnode.NewNode()
 	if err := h.AddFactory(&TimeFactory{}); err != nil {
 		t.Fatal(err)
@@ -23,7 +23,7 @@ func testNode(t *testing.T, dir string) (*bitnode.NativeNode, *bitnode.Domain) {
 }
 
 func TestTime1(t *testing.T) {
-	h, dom := testNode(t, "./")
+	h, dom := testNodeTime(t, "../library/time/")
 
 	creds := bitnode.Credentials{}
 
@@ -52,7 +52,7 @@ func TestTime1(t *testing.T) {
 }
 
 func TestTime2(t *testing.T) {
-	h, dom := testNode(t, "./")
+	h, dom := testNodeTime(t, "../library/time/")
 
 	creds := bitnode.Credentials{}
 

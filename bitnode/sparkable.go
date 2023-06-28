@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"os"
-	"strings"
 )
 
 // A Sparkable for systems.
@@ -61,14 +60,14 @@ func (m *Sparkable) Save(dom *Domain) error {
 	if err != nil {
 		return err
 	}
-	chDefsBytes, err := os.ReadFile(dom.filePath)
+	chDefsBytes, err := os.ReadFile(dom.FilePath)
 	if err != nil {
-		return fmt.Errorf("reading definitions from %s: %v", dom.filePath, err)
+		return fmt.Errorf("reading definitions from %s: %v", dom.FilePath, err)
 	}
 
 	defs := Domain{}
 	if err := yaml.Unmarshal(chDefsBytes, &defs); err != nil {
-		return fmt.Errorf("parsing definitions from %s: %v", dom.filePath, err)
+		return fmt.Errorf("parsing definitions from %s: %v", dom.FilePath, err)
 	}
 
 	for _, bp := range defs.Sparkables {
@@ -78,9 +77,9 @@ func (m *Sparkable) Save(dom *Domain) error {
 	}
 
 	if yamlBts, err := yaml.Marshal(defs); err != nil {
-		return fmt.Errorf("parsing definitions from %s: %v", dom.filePath, err)
+		return fmt.Errorf("parsing definitions from %s: %v", dom.FilePath, err)
 	} else {
-		if err := os.WriteFile(dom.filePath, yamlBts, os.ModePerm); err != nil {
+		if err := os.WriteFile(dom.FilePath, yamlBts, os.ModePerm); err != nil {
 			return err
 		}
 	}
@@ -90,6 +89,9 @@ func (m *Sparkable) Save(dom *Domain) error {
 
 func (m *Sparkable) Reset() {
 	m.compiled = false
+	for _, c := range m.Constructor {
+		c.Value.Reset()
+	}
 	if m.Interface != nil {
 		m.Interface.Reset()
 	}
@@ -113,14 +115,6 @@ func (m *Sparkable) Compile(dom *Domain, domName string, resolve bool) error {
 
 	if m.Domain == "" && domName != "" {
 		m.Domain = domName
-	}
-	if m.Name != "" {
-		if m.Name[0] < 'A' || m.Name[0] > 'Z' {
-			return fmt.Errorf("impl names must start with a lower character (a-z)")
-		}
-		if strings.ContainsAny(m.Name, "-/_ ") {
-			return fmt.Errorf("impl name must not contain spaces, dashes, underscores or slashes")
-		}
 	}
 
 	if m.Interface == nil {
@@ -222,9 +216,11 @@ func (m *Sparkable) FromInterface(i any) error {
 	}
 	bpMpImpl := iMp["implementation"]
 	m.Implementation = map[string][]any{}
-	for f, impls := range bpMpImpl.(map[string]any) {
-		for _, impl := range impls.([]any) {
-			m.Implementation[f] = append(m.Implementation[f], impl)
+	if bpMpImpl != nil {
+		for f, impls := range bpMpImpl.(map[string]any) {
+			for _, impl := range impls.([]any) {
+				m.Implementation[f] = append(m.Implementation[f], impl)
+			}
 		}
 	}
 	delete(iMp, "implementation")

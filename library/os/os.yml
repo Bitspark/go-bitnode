@@ -1,111 +1,138 @@
 name: os
 description: ""
 permissions:
-  view:
-    public: true
+    owner: "0000000000000000000000000000"
+    admin:
+        public: false
+        auth: false
+        users: []
+        groups: []
+    extend:
+        public: false
+        auth: false
+        users: []
+        groups: []
+    view:
+        public: true
+        auth: false
+        users: []
+        groups: []
 types: []
 interfaces:
     - name: OperatingSystem
       description: A hologram representing an operating system instance.
+      permissions:
+        owner: "0000000000000000000000000000"
+        admin:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        extend:
+            public: false
+            auth: false
+            users: []
+            groups: []
+        view:
+            public: false
+            auth: false
+            users: []
+            groups: []
       hubs:
-        - name: hostname
-          description: Hostname of the computer.
+        - description: Hostname of the computer.
+          direction: out
+          name: hostname
           type: value
           value:
-            value:
-              leaf: string
+            name: hostname
+            description: The hostname as a string.
+            value: string
+        - description: Name of the operating system.
           direction: out
-        - name: operatingSystem
-          description: Name of the operating system.
+          name: operatingSystem
           type: value
           value:
             name: operatingSystem
             description: Name of the operating system.
-            value:
-              leaf: string
+            value: string
+        - description: Virtual memory in bytes.
           direction: out
-        - name: memory
-          description: Virtual memory in bytes.
+          name: memory
           type: value
           value:
+            name: stats
+            description: The memory stats.
             value:
-              mapOf:
-                total:
-                  leaf: integer
                 free:
-                  leaf: integer
+                    description: The amount of free memory in bytes.
+                    leaf: integer
+                total:
+                    description: The amount of total memory in bytes.
+                    leaf: integer
+        - description: CPUs of the computer.
           direction: out
-        - name: cpus
-          description: CPUs of the computer.
+          name: cpus
           type: value
           value:
+            name: stats
+            description: A list of CPU stats.
             value:
-              listOf:
-                mapOf:
-                  cpu:
-                    leaf: integer
-                  cores:
-                    leaf: integer
-                  model:
-                    leaf: string
+                - mapOf:
+                    cores:
+                        description: The number of cores.
+                        leaf: integer
+                    cpu:
+                        description: The CPU index.
+                        leaf: integer
+                    model:
+                        description: The CPU model name.
+                        leaf: string
+        - description: The main filesystem of the operating system.
           direction: out
-        - name: filesystem
-          description: The main filesystem of the operating system.
+          name: filesystem
           type: value
-          direction: out
           value:
             name: filesystem
             description: The filesystem.
-            value:
-              reference: hub.system
-              extensions:
-                system: Filesystem
-        - name: restart
-          description: Channel triggering a restart.
-          type: channel
+            value: $hub.system
+        - description: Channel triggering a restart.
           direction: both
+          name: restart
+          type: channel
           value:
             name: options
             description: Restart options.
             value:
-              mapOf:
                 force:
-                  description: Forces an instant restart, not waiting for programs to finish gracefully.
-                  leaf: boolean
-
+                    description: Forces an instant restart, not waiting for programs to finish gracefully.
+                    leaf: boolean
     - name: Filesystem
       description: A filesystem.
       hubs: []
-
     - name: Process
       description: A computer process.
       hubs:
-        - name: id
-          description: ID of the process (PID).
+        - description: ID of the process (PID).
+          direction: out
+          name: id
           type: value
           value:
-            value:
-              leaf: integer
+            value: integer
+        - description: Name of the process.
           direction: out
-        - name: name
-          description: Name of the process.
+          name: name
           type: value
           value:
-            value:
-              leaf: string
-          direction: out
-
+            value: string
     - name: Filesystem
       description: A computer filesystem.
       hubs:
-        - name: name
-          description: Name of the filesystem.
+        - description: Name of the filesystem.
+          direction: out
+          name: name
           type: value
           value:
-            value:
-              leaf: string
-          direction: out
-
+            value: string
 blueprints:
     - name: OperatingSystem
       description: The operating system instance.
@@ -113,6 +140,7 @@ blueprints:
       interface:
         extends:
             - OperatingSystem
-
       implementation:
-        os: [{}]
+        os:
+            - {}
+models: []

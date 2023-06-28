@@ -16,17 +16,23 @@ const (
 	LifecycleCreate = "create"
 	LifecycleLoad   = "load"
 	LifecycleStore  = "store"
-	LifecycleMeta   = "meta"
+	LifecycleName   = "name"
+	LifecycleStatus = "status"
+	LifecycleLog    = "log"
+	LifecycleStop   = "stop"
+	LifecycleKill   = "kill"
+	LifecycleStart  = "start"
 )
 
 const (
-	SystemStatusUndefined = iota
-	SystemStatusStarting
-	SystemStatusRunning
-	SystemStatusStopped
-	SystemStatusKilled
-	SystemStatusDisconnected
-	SystemStatusStopping
+	SystemStatusUndefined    = 0
+	SystemStatusStarting     = 1
+	SystemStatusRunning      = 2
+	SystemStatusStopped      = 3
+	SystemStatusKilled       = 4
+	SystemStatusDisconnected = 5
+	SystemStatusStopping     = 6
+	SystemStatusConnecting   = 7
 )
 
 // LifecycleEvent contains events event callbacks.
@@ -49,17 +55,17 @@ type System interface {
 	// ID which uniquely identifies this system.
 	ID() SystemID
 
-	// Interface returns the interface this system implements.
-	Interface() *Interface
-
 	// Name of this system.
 	Name() string
+
+	// Interface returns the interface this system implements.
+	Interface() *Interface
 
 	// Status of this system.
 	Status() int
 
-	// Message of this system.
-	Message() string
+	// Kill kills the system instantly.
+	Kill()
 
 	// SetName changes the name of the system.
 	SetName(name string)
@@ -67,20 +73,26 @@ type System interface {
 	// SetStatus changes the status of the system.
 	SetStatus(status int)
 
-	// SetMessage changes the message of the system.
-	SetMessage(name string)
-
 	// GetHub returns a hub of this system.
 	GetHub(hubName string) Hub
 
 	// Hubs returns all hubs of this system.
 	Hubs() []Hub
 
-	// Log logs a message.
-	Log(level int, msg string)
+	// LogDebug logs a debug message.
+	LogDebug(msg string)
 
-	// Error logs an error message.
-	Error(err error)
+	// LogInfo logs an info message.
+	LogInfo(msg string)
+
+	// LogWarning logs a warning message.
+	LogWarning(msg string)
+
+	// LogError logs an error message.
+	LogError(err error)
+
+	// LogFatal logs a fatal error message.
+	LogFatal(err error)
 
 	// Connected reveals if this system is connected.
 	Connected() bool
@@ -90,6 +102,15 @@ type System interface {
 
 	// AddExtension attaches a system extension to the system.
 	AddExtension(name string, impl SystemExtension)
+
+	// SetExtension sets a system extension of the system.
+	SetExtension(name string, impl SystemExtension)
+
+	// Extensions returns extensions by name.
+	Extensions(name string) []SystemExtension
+
+	// Extension returns an extension by name.
+	Extension(name string) SystemExtension
 
 	// AddSystem attaches a system.
 	AddSystem(sys *NativeSystem) error
@@ -176,6 +197,8 @@ type NativeSystem struct {
 	message string
 
 	eventsMux sync.Mutex
+
+	implMux sync.Mutex
 }
 
 func (s *NativeSystem) Node() Node {
@@ -194,20 +217,16 @@ func (s *NativeSystem) Status() int {
 	return s.status
 }
 
-func (s *NativeSystem) Message() string {
-	return s.message
+func (s *NativeSystem) Kill(creds Credentials) {
+	_ = s.EmitEvent(LifecycleKill)
 }
 
 func (s *NativeSystem) SetName(creds Credentials, name string) {
-	_ = s.EmitEvent(LifecycleMeta, name, nil, nil)
+	_ = s.EmitEvent(LifecycleName, name)
 }
 
 func (s *NativeSystem) SetStatus(creds Credentials, status int) {
-	_ = s.EmitEvent(LifecycleMeta, nil, status, nil)
-}
-
-func (s *NativeSystem) SetMessage(creds Credentials, message string) {
-	_ = s.EmitEvent(LifecycleMeta, nil, nil, message)
+	_ = s.EmitEvent(LifecycleStatus, int64(status))
 }
 
 func (s *NativeSystem) Constructor() HubItemsInterface {
@@ -228,6 +247,7 @@ func (s *NativeSystem) Sparkable() *Sparkable {
 		_ = bp.Interface.CompiledHubs.AddHub(hubInterf)
 	}
 
+	s.implMux.Lock()
 	for f, ms := range s.impls {
 		for _, m := range ms {
 			impl := m.Implementation()
@@ -239,6 +259,7 @@ func (s *NativeSystem) Sparkable() *Sparkable {
 			bp.Implementation[f] = impls
 		}
 	}
+	s.implMux.Unlock()
 
 	return bp
 }
@@ -270,6 +291,9 @@ func (s *NativeSystem) GetHub(creds Credentials, mws Middlewares, hubName string
 }
 
 func (s *NativeSystem) getHub(hubName string) *NativeHub {
+	if s == nil {
+		return nil
+	}
 	for _, hub := range s.hubs {
 		if hub.hubInterface.Name == hubName {
 			return hub
@@ -401,7 +425,9 @@ func (s *NativeSystem) LoadInit(node *NativeNode, st store.Store) error {
 	s.systems = map[SystemID]*NativeSystem{}
 	s.events = map[string]*LifecycleEvent{}
 
-	s.init()
+	if err := node.initSystem(s); err != nil {
+		return err
+	}
 
 	systemStoreDS, _ := st.Ensure("system", store.DSKeyValue)
 	systemStore := systemStoreDS.KeyValue()
@@ -481,9 +507,33 @@ func (s *NativeSystem) Load(node *NativeNode, dom *Domain, st store.Store) error
 }
 
 func (s *NativeSystem) AddExtension(name string, impl SystemExtension) {
+	s.implMux.Lock()
 	exts, _ := s.impls[name]
 	exts = append(exts, impl)
 	s.impls[name] = exts
+	s.implMux.Unlock()
+}
+
+func (s *NativeSystem) SetExtension(name string, impl SystemExtension) {
+	s.implMux.Lock()
+	s.impls[name] = []SystemExtension{impl}
+	s.implMux.Unlock()
+}
+
+func (s *NativeSystem) Extensions(name string) []SystemExtension {
+	s.implMux.Lock()
+	defer s.implMux.Unlock()
+	return s.impls[name]
+}
+
+func (s *NativeSystem) Extension(name string) SystemExtension {
+	s.implMux.Lock()
+	defer s.implMux.Unlock()
+	exts := s.impls[name]
+	if len(exts) != 1 {
+		return nil
+	}
+	return exts[0]
 }
 
 func (s *NativeSystem) Wrap(creds Credentials, mws Middlewares) *CredSystem {
@@ -510,16 +560,16 @@ type CredSystem struct {
 
 var _ System = &CredSystem{}
 
+func (s *CredSystem) Kill() {
+	s.NativeSystem.Kill(s.creds)
+}
+
 func (s *CredSystem) SetName(name string) {
 	s.NativeSystem.SetName(s.creds, name)
 }
 
 func (s *CredSystem) SetStatus(status int) {
 	s.NativeSystem.SetStatus(s.creds, status)
-}
-
-func (s *CredSystem) SetMessage(message string) {
-	s.NativeSystem.SetMessage(s.creds, message)
 }
 
 func (s *CredSystem) GetHub(hubName string) Hub {
@@ -555,41 +605,45 @@ func (s *CredSystem) Middlewares() Middlewares {
 }
 
 const (
+	// LogDebug indicates the message provides details about the inner workings of the system.
 	LogDebug = iota
+
+	// LogInfo indicates the message provides information about the progress of the system.
 	LogInfo
-	LogWarn
+
+	// LogWarning indicates the message provides details about a non-critical problem that occurred in the system.
+	LogWarning
+
+	// LogError indicates the message informs about a local non-fatal error in the system.
 	LogError
+
+	// LogFatal indicates the message informs about a global fatal error causing the system to stop working.
+	LogFatal
 )
 
-// Log adds a new log message to the system.
-func (s *NativeSystem) Log(level int, msg string) {
-	t := time.Now()
-	s.logs.Add(t.UnixNano(), LogMessage{
-		Level:   level,
-		Time:    t,
-		Message: msg,
-	})
-	log.Printf("[%d] %s", level, msg)
+// log emits a log message.
+func (s *NativeSystem) log(level int, msg string) {
+	_ = s.EmitEvent(LifecycleLog, time.Now().UnixNano(), int64(level), msg)
 }
 
-// Log adds a new log message to the system.
-func (s *NativeSystem) Error(err error) {
-	s.Log(LogError, err.Error())
+func (s *NativeSystem) LogDebug(msg string) {
+	s.log(LogDebug, msg)
 }
 
-func (s *NativeSystem) init() {
-	s.AddCallback(LifecycleMeta, NewNativeEvent(func(vals ...HubItem) error {
-		if vals[0] != nil {
-			s.name = vals[0].(string)
-		}
-		if vals[1] != nil {
-			s.status = vals[1].(int)
-		}
-		if vals[2] != nil {
-			s.message = vals[2].(string)
-		}
-		return nil
-	}))
+func (s *NativeSystem) LogInfo(msg string) {
+	s.log(LogInfo, msg)
+}
+
+func (s *NativeSystem) LogWarning(msg string) {
+	s.log(LogWarning, msg)
+}
+
+func (s *NativeSystem) LogError(err error) {
+	s.log(LogError, err.Error())
+}
+
+func (s *NativeSystem) LogFatal(err error) {
+	s.log(LogFatal, err.Error())
 }
 
 // SYSTEM
@@ -635,11 +689,9 @@ func WaitFor(sys System, status int) {
 		return
 	}
 	ch := make(chan bool)
-	sys.AddCallback(LifecycleMeta, NewNativeEvent(func(vals ...HubItem) error {
-		if vals[1] == nil {
-			return nil
-		}
-		if vals[1].(int) == status {
+	sys.AddCallback(LifecycleStatus, NewNativeEvent(func(vals ...HubItem) error {
+		newStatus := vals[0].(int64)
+		if int(newStatus) == status {
 			ch <- true
 		}
 		return nil

@@ -66,14 +66,14 @@ func (i *Interface) Save(dom *Domain) error {
 	if err != nil {
 		return err
 	}
-	chDefsBytes, err := os.ReadFile(interf.filePath)
+	chDefsBytes, err := os.ReadFile(interf.FilePath)
 	if err != nil {
-		return fmt.Errorf("reading definitions from %s: %v", interf.filePath, err)
+		return fmt.Errorf("reading definitions from %s: %v", interf.FilePath, err)
 	}
 
 	defs := Domain{}
 	if err := yaml.Unmarshal(chDefsBytes, &defs); err != nil {
-		return fmt.Errorf("parsing definitions from %s: %v", interf.filePath, err)
+		return fmt.Errorf("parsing definitions from %s: %v", interf.FilePath, err)
 	}
 
 	for _, inf := range defs.Interfaces {
@@ -83,9 +83,9 @@ func (i *Interface) Save(dom *Domain) error {
 	}
 
 	if yamlBts, err := yaml.Marshal(defs); err != nil {
-		return fmt.Errorf("parsing definitions from %s: %v", interf.filePath, err)
+		return fmt.Errorf("parsing definitions from %s: %v", interf.FilePath, err)
 	} else {
-		if err := os.WriteFile(interf.filePath, yamlBts, os.ModePerm); err != nil {
+		if err := os.WriteFile(interf.FilePath, yamlBts, os.ModePerm); err != nil {
 			return err
 		}
 	}
@@ -121,6 +121,11 @@ func (i *Interface) Reset() {
 		}
 	}
 
+	// Reset references.
+	for ri := range i.references {
+		ri.Reset()
+	}
+
 	i.CompiledHubs = nil
 	i.CompiledExtends = nil
 }
@@ -138,15 +143,6 @@ func (i *Interface) Compile(dom *Domain, domName string, resolve bool) error {
 	}()
 	if i.references == nil {
 		i.references = map[Compilable]bool{}
-	}
-
-	if i.Name != "" {
-		if i.Name[0] < 'A' || i.Name[0] > 'Z' {
-			return fmt.Errorf("interface names must start with an upper character (A-Z)")
-		}
-		if strings.ContainsAny(i.Name, "-/_ ") {
-			return fmt.Errorf("interface name must not contain spaces, dashes, underscores or slashes")
-		}
 	}
 
 	if domName != "" {

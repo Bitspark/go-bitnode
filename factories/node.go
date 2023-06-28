@@ -1,4 +1,4 @@
-package libMeta
+package factories
 
 import (
 	"fmt"

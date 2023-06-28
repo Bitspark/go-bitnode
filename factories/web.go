@@ -1,4 +1,4 @@
-package libWeb
+package factories
 
 import (
 	"bytes"
@@ -162,7 +162,7 @@ func (m *WebImpl) Implement(node *bitnode.NativeNode, sys bitnode.System) error 
 
 		// Status and message
 
-		sys.SetMessage("Web client running")
+		sys.LogInfo("Web client running")
 		sys.SetStatus(bitnode.SystemStatusRunning)
 
 		return nil

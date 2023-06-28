@@ -1,4 +1,4 @@
-package libTime
+package factories
 
 import (
 	"fmt"
@@ -55,7 +55,7 @@ func (m *TimeImpl) Implement(node *bitnode.NativeNode, sys bitnode.System) error
 
 		// Status and message
 
-		sys.SetMessage("Clock running")
+		sys.LogInfo("Clock running")
 		sys.SetStatus(bitnode.SystemStatusRunning)
 
 		return nil
@@ -84,7 +84,7 @@ func (m *TimeImpl) Implement(node *bitnode.NativeNode, sys bitnode.System) error
 
 		// Status and message
 
-		sys.SetMessage("Trigger running")
+		sys.LogInfo("Trigger running")
 		sys.SetStatus(bitnode.SystemStatusRunning)
 
 		return nil

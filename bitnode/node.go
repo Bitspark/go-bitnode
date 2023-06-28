@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/Bitspark/go-bitnode/store"
 	"github.com/Bitspark/go-bitnode/util"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -142,12 +143,12 @@ func (h *NativeNode) NewSystem(creds Credentials, m Sparkable, payload ...HubIte
 	go func(sys *CredSystem) {
 		// Trigger creation.
 		if err := sys.EmitEvent(LifecycleCreate, payload...); err != nil {
-			sys.Error(err)
+			sys.LogError(err)
 		}
 
 		// Trigger loading.
 		if err := sys.EmitEvent(LifecycleLoad); err != nil {
-			sys.Error(err)
+			sys.LogError(err)
 		}
 	}(sys.(*CredSystem))
 
@@ -183,7 +184,9 @@ func (h *NativeNode) PrepareSystem(creds Credentials, m Sparkable) (System, erro
 		sys.extends = append(sys.extends, m.Domain+DomSep+m.Name+"$")
 	}
 
-	sys.init()
+	if err := h.initSystem(sys); err != nil {
+		return nil, err
+	}
 
 	// Add the system to this node.
 	h.systems[sys.id] = sys
@@ -205,6 +208,36 @@ func (h *NativeNode) PrepareSystem(creds Credentials, m Sparkable) (System, erro
 	}
 
 	return credSys, nil
+}
+
+func (h *NativeNode) initSystem(s *NativeSystem) error {
+	s.AddCallback(LifecycleName, NewNativeEvent(func(vals ...HubItem) error {
+		name := vals[0].(string)
+		s.name = name
+		return nil
+	}))
+
+	s.AddCallback(LifecycleStatus, NewNativeEvent(func(vals ...HubItem) error {
+		status := vals[0].(int64)
+		s.status = int(status)
+		return nil
+	}))
+
+	s.AddCallback(LifecycleLog, NewNativeEvent(func(vals ...HubItem) error {
+		logTimestampNano := vals[0].(int64)
+		level := vals[1].(int64)
+		msg := vals[2].(string)
+		logTime := time.Unix(logTimestampNano/1e9, logTimestampNano%1e9)
+		s.logs.Add(logTimestampNano, LogMessage{
+			Level:   int(level),
+			Time:    logTime,
+			Message: msg,
+		})
+		log.Printf("[%d] %s", level, msg)
+		return nil
+	}))
+
+	return nil
 }
 
 // AddSystem attaches a system to this node.
@@ -301,10 +334,11 @@ func (h *NativeNode) Load(st store.Store, dom *Domain) error {
 			sys.systems[chSysID] = h.systems[chSysID]
 		}
 
-		// Trigger loading.
-		if err := sys.EmitEvent(LifecycleLoad); err != nil {
-			return err
-		}
+		go func(sys *NativeSystem) {
+			if err := sys.EmitEvent(LifecycleLoad); err != nil {
+				log.Printf("Error loading %s: %v", sys.Name(), err)
+			}
+		}(sys)
 	}
 
 	nodeStoreDS, err := st.Ensure("node", store.DSKeyValue)

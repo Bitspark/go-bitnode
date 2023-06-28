@@ -16,12 +16,20 @@ func TestDomain1(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = a.AddDomain("1")
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal()
 	}
 	_, err = a.AddDomain("2")
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal()
+	}
+	_, err = a.AddDomain("A")
+	if err == nil {
+		t.Fatal()
+	}
+	_, err = a.AddDomain("a_b")
+	if err == nil {
+		t.Fatal()
 	}
 }
 
@@ -29,8 +37,8 @@ func TestDomain2(t *testing.T) {
 	dom := NewDomain()
 	a, _ := dom.AddDomain("a")
 	b, _ := dom.AddDomain("b")
-	a1, _ := a.AddDomain("1")
-	a2, _ := a.AddDomain("2")
+	a1, _ := a.AddDomain("x")
+	a2, _ := a.AddDomain("y")
 
 	if d, err := dom.GetDomain("a"); err != nil || d != a {
 		t.Fatal(err, d)
@@ -38,10 +46,10 @@ func TestDomain2(t *testing.T) {
 	if d, err := dom.GetDomain("b"); err != nil || d != b {
 		t.Fatal(err, d)
 	}
-	if d, err := dom.GetDomain("a.1"); err != nil || d != a1 {
+	if d, err := dom.GetDomain("a.x"); err != nil || d != a1 {
 		t.Fatal(err, d)
 	}
-	if d, err := dom.GetDomain("a.2"); err != nil || d != a2 {
+	if d, err := dom.GetDomain("a.y"); err != nil || d != a2 {
 		t.Fatal(err, d)
 	}
 }
@@ -50,15 +58,15 @@ func TestDomain3(t *testing.T) {
 	dom := NewDomain()
 	a, _ := dom.AddDomain("a")
 	b, _ := dom.AddDomain("b")
-	a1, _ := a.AddDomain("1")
-	a2, _ := a.AddDomain("2")
+	a1, _ := a.AddDomain("x")
+	a2, _ := a.AddDomain("z")
 	_ = b
 	_ = a2
 
-	if d, err := a.GetDomain(".1"); err != nil || d != a1 {
+	if d, err := a.GetDomain(".x"); err != nil || d != a1 {
 		t.Fatal(err, d)
 	}
-	if d, err := a.GetDomain("a.1"); err != nil || d != a1 {
+	if d, err := a.GetDomain("a.x"); err != nil || d != a1 {
 		t.Fatal(err, d)
 	}
 	if d, err := a1.GetDomain("."); err != nil || d != a1 {
@@ -70,8 +78,8 @@ func TestDomain4(t *testing.T) {
 	dom := NewDomain()
 	a, _ := dom.AddDomain("a")
 	b, _ := dom.AddDomain("b")
-	a1, _ := a.AddDomain("1")
-	a2, _ := a.AddDomain("2")
+	a1, _ := a.AddDomain("x")
+	a2, _ := a.AddDomain("z")
 	a1x, _ := a1.AddDomain("x")
 	_ = b
 	_ = a2

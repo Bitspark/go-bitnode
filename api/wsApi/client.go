@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Bitspark/go-bitnode/bitnode"
-	"log"
 	"sync"
 	"time"
 )
@@ -17,11 +16,11 @@ type Client struct {
 	// cid is the ID of the client-server connection, chosen by the client.
 	cid string
 
-	conn          *NodeConn
-	remoteName    string
-	remoteStatus  int
-	remoteMessage string
-	remoteID      bitnode.SystemID
+	conn         *NodeConn
+	remoteNode   string
+	remoteName   string
+	remoteStatus int
+	remoteID     bitnode.SystemID
 
 	created time.Time
 	server  bool
@@ -62,16 +61,16 @@ func (c *Client) RemoteID() bitnode.SystemID {
 	return c.remoteID
 }
 
+func (c *Client) Kill() {
+	c.NativeSystem.Kill(c.creds)
+}
+
 func (c *Client) SetName(name string) {
 	c.NativeSystem.SetName(c.creds, name)
 }
 
 func (c *Client) SetStatus(status int) {
 	c.NativeSystem.SetStatus(c.creds, status)
-}
-
-func (c *Client) SetMessage(message string) {
-	c.NativeSystem.SetMessage(c.creds, message)
 }
 
 func (c *Client) Hubs() []bitnode.Hub {
@@ -85,14 +84,6 @@ func (c *Client) GetHub(name string) bitnode.Hub {
 // Connected tells whether the client has been connected already.
 func (c *Client) Connected() bool {
 	return c.NativeSystem != nil
-}
-
-func (c *Client) Log(code int, msg string) {
-	if c.server {
-		log.Printf("[S-%s-%d] %s", c.cid, code, msg)
-	} else {
-		log.Printf("[C-%s-%d] %s", c.cid, code, msg)
-	}
 }
 
 func (c *Client) Disconnect() error {
@@ -137,6 +128,16 @@ func (c *Client) EmitLoad() error {
 	return nil
 }
 
+func (c *Client) EmitKill() error {
+	sendStopOrKill := &SystemMessageLifecycleKill{}
+	ret := c.send("kill", sendStopOrKill, "", true)
+	resp := <-ret.ch
+	if err, ok := resp.(error); ok {
+		return err
+	}
+	return nil
+}
+
 // send sends a command to the remote node it is connected to.
 func (c *Client) send(cmd string, m SystemMessage, reference string, returns bool) *ClientRefChan {
 	if c.conn == nil {
@@ -157,11 +158,11 @@ func (c *Client) send(cmd string, m SystemMessage, reference string, returns boo
 			msg := <-ref.ch
 			err, isErr := msg.(*NodePayloadError)
 			if isErr {
-				c.Log(bitnode.LogError, fmt.Sprintf("received error: %s", err.Error))
+				c.LogError(fmt.Errorf("received error: %s", err.Error))
 				ch.ch <- errors.New(err.Error)
 				return
 			} else if msg == nil {
-				c.Log(bitnode.LogError, fmt.Sprintf("received nil response (%s)", ch.cmd))
+				c.LogError(fmt.Errorf("received nil response (%s)", ch.cmd))
 				ch.ch <- nil
 				return
 			}
@@ -184,33 +185,29 @@ func (c *Client) attachSystem() error {
 	hubs := c.Hubs()
 	errs := make(chan error)
 
-	c.NativeSystem.AddCallback(bitnode.LifecycleMeta, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
-		sendMeta := &SystemMessageLifecycleMeta{}
-		if vals[0] != nil {
-			name := vals[0].(string)
-			if name != c.remoteName {
-				sendMeta.Name = &name
-			}
+	c.NativeSystem.AddCallback(bitnode.LifecycleName, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
+		name := vals[0].(string)
+		if name != c.remoteName {
+			c.send("name", &SystemMessageLifecycleName{
+				Name: name,
+			}, "", false)
 		}
-		if c.server {
-			if vals[1] != nil {
-				status := vals[1].(int)
-				if status != c.remoteStatus {
-					sendMeta.Status = &status
-				}
-			}
-			if vals[2] != nil {
-				message := vals[2].(string)
-				if message != c.remoteMessage {
-					sendMeta.Message = &message
-				}
-			}
-		}
-		if sendMeta.Name == nil && sendMeta.Status == nil && sendMeta.Message == nil {
-			return nil
-		}
-		c.send("meta", sendMeta, "", false)
+		return nil
+	}))
 
+	if c.server {
+		c.NativeSystem.AddCallback(bitnode.LifecycleStatus, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
+			status := vals[0].(int64)
+			if int(status) != c.remoteStatus {
+				c.send("status", &SystemMessageLifecycleStatus{
+					Status: int(status),
+				}, "", false)
+			}
+			return nil
+		}))
+	}
+
+	c.NativeSystem.AddCallback(bitnode.LifecycleKill, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
 		return nil
 	}))
 
@@ -249,7 +246,7 @@ func (c *Client) attachClientHub(hub bitnode.Hub) error {
 			}
 			wrappedVals, err := c.wrapValues(interf.Input, vals...)
 			if err != nil {
-				c.Log(bitnode.LogError, err.Error())
+				c.LogError(err)
 				return nil, err
 			}
 			invoke := c.send("invoke", &SystemMessageInvoke{
@@ -257,17 +254,40 @@ func (c *Client) attachClientHub(hub bitnode.Hub) error {
 				Value: wrappedVals,
 			}, "", true)
 			if wrappedRets, err := invoke.await(); err != nil {
-				c.Log(bitnode.LogError, err.Error())
+				c.LogError(err)
 				return nil, err
 			} else {
 				wrappedVals := wrappedRets.(*SystemMessageReturn)
 				rets, err := c.unwrapValues(interf.Output, wrappedVals.Return...)
 				if err != nil {
-					c.Log(bitnode.LogError, err.Error())
+					c.LogError(err)
 					return nil, err
 				}
 				return rets, nil
 			}
+		}))
+
+	case bitnode.HubTypeValue:
+		hub.Subscribe(bitnode.NewNativeSubscription(func(id string, creds bitnode.Credentials, val bitnode.HubItem) {
+			if !c.Active() {
+				return
+			}
+			c.incomingMux.Lock()
+			if c.incomingIDs[id] {
+				c.incomingMux.Unlock()
+				return
+			}
+			c.incomingMux.Unlock()
+			wrappedVal, err := c.wrapValue(*interf.Value, val)
+			if err != nil {
+				c.LogError(err)
+				return
+			}
+			c.send("push", &SystemMessagePush{
+				Hub:   hub.Name(),
+				ID:    id,
+				Value: wrappedVal,
+			}, "", false)
 		}))
 
 	case bitnode.HubTypeChannel:
@@ -277,7 +297,7 @@ func (c *Client) attachClientHub(hub bitnode.Hub) error {
 			}
 			wrappedVals, err := c.wrapValue(*interf.Value, val)
 			if err != nil {
-				c.Log(bitnode.LogError, err.Error())
+				c.LogError(err)
 				return
 			}
 			c.send("push", &SystemMessagePush{
@@ -306,7 +326,7 @@ func (c *Client) attachServerHub(hub bitnode.Hub) error {
 			}
 			wrappedVals, err := c.wrapValue(*interf.Value, val)
 			if err != nil {
-				c.Log(bitnode.LogError, err.Error())
+				c.LogError(err)
 				return
 			}
 			c.send("push", &SystemMessagePush{
@@ -329,7 +349,7 @@ func (c *Client) attachServerHub(hub bitnode.Hub) error {
 			c.incomingMux.Unlock()
 			wrappedVal, err := c.wrapValue(*interf.Value, val)
 			if err != nil {
-				c.Log(bitnode.LogError, err.Error())
+				c.LogError(err)
 				return
 			}
 			c.send("push", &SystemMessagePush{
@@ -352,7 +372,6 @@ func (c *Client) attachServerHub(hub bitnode.Hub) error {
 func (c *Client) wrapValues(interf bitnode.HubItemsInterface, unwrappedVals ...bitnode.HubItem) ([]bitnode.HubItem, error) {
 	wrappers := &bitnode.Middlewares{}
 	wrappers.PushBack(&systemWrapper{c: c})
-	wrappers.PushBack(&modelWrapper{c: c})
 	wrappers.PushBack(&sparkableWrapper{c: c})
 	wrappers.PushBack(&interfaceWrapper{c: c})
 	wrappers.PushBack(&typeWrapper{c: c})
@@ -365,7 +384,6 @@ func (c *Client) wrapValues(interf bitnode.HubItemsInterface, unwrappedVals ...b
 func (c *Client) wrapValue(interf bitnode.HubItemInterface, unwrappedVal bitnode.HubItem) (bitnode.HubItem, error) {
 	wrappers := &bitnode.Middlewares{}
 	wrappers.PushBack(&systemWrapper{c: c})
-	wrappers.PushBack(&modelWrapper{c: c})
 	wrappers.PushBack(&sparkableWrapper{c: c})
 	wrappers.PushBack(&interfaceWrapper{c: c})
 	wrappers.PushBack(&typeWrapper{c: c})
@@ -378,7 +396,6 @@ func (c *Client) wrapValue(interf bitnode.HubItemInterface, unwrappedVal bitnode
 func (c *Client) unwrapValues(interf bitnode.HubItemsInterface, wrappedVals ...bitnode.HubItem) ([]bitnode.HubItem, error) {
 	unwrappers := &bitnode.Middlewares{}
 	unwrappers.PushBack(&systemWrapper{c: c})
-	unwrappers.PushBack(&modelWrapper{c: c})
 	unwrappers.PushBack(&sparkableWrapper{c: c})
 	unwrappers.PushBack(&interfaceWrapper{c: c})
 	unwrappers.PushBack(&typeWrapper{c: c})
@@ -391,7 +408,6 @@ func (c *Client) unwrapValues(interf bitnode.HubItemsInterface, wrappedVals ...b
 func (c *Client) unwrapValue(interf bitnode.HubItemInterface, wrappedVal bitnode.HubItem) (bitnode.HubItem, error) {
 	unwrappers := &bitnode.Middlewares{}
 	unwrappers.PushBack(&systemWrapper{c: c})
-	unwrappers.PushBack(&modelWrapper{c: c})
 	unwrappers.PushBack(&sparkableWrapper{c: c})
 	unwrappers.PushBack(&interfaceWrapper{c: c})
 	unwrappers.PushBack(&typeWrapper{c: c})
@@ -503,44 +519,6 @@ func (s systemWrapper) Middleware(ext any, val bitnode.HubItem, out bool) (bitno
 	}
 }
 
-// MODEL
-
-type modelWrapper struct {
-	c *Client
-}
-
-var _ bitnode.Middleware = &modelWrapper{}
-
-func (s modelWrapper) Name() string {
-	return "model"
-}
-
-func (s modelWrapper) Middleware(ext any, val bitnode.HubItem, out bool) (bitnode.HubItem, error) {
-	if out {
-		model, _ := val.(*bitnode.Model)
-		if model == nil {
-			return nil, nil
-		}
-		modelMp, _ := model.ToInterface()
-		modelMp.(map[string]any)["myPermissions"] = map[string]bitnode.HubItem{
-			"owner":  model.Permissions.HavePermissions("owner", s.c.creds),
-			"admin":  model.Permissions.HavePermissions("admin", s.c.creds),
-			"extend": model.Permissions.HavePermissions("extend", s.c.creds),
-			"view":   model.Permissions.HavePermissions("view", s.c.creds),
-		}
-		return modelMp, nil
-	} else {
-		model := &bitnode.Model{}
-		if err := model.FromInterface(val); err != nil {
-			return nil, err
-		}
-		if err := model.Compile(nil, model.Domain, true); err != nil {
-			return nil, err
-		}
-		return model, nil
-	}
-}
-
 // SPARKABLE
 
 type sparkableWrapper struct {
@@ -648,7 +626,7 @@ func (s typeWrapper) Middleware(ext any, val bitnode.HubItem, out bool) (bitnode
 		if err := tp.FromInterface(val); err != nil {
 			return nil, err
 		}
-		if err := tp.Compile(nil, tp.Domain, true); err != nil {
+		if err := tp.Compile(nil, tp.Domain, false); err != nil {
 			return nil, err
 		}
 		return tp, nil
