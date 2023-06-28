@@ -842,8 +842,10 @@ func (pc *NodePayloadClient) UnmarshalJSON(data []byte) error {
 		pc.Payload = &SystemMessageLifecycleCreate{}
 	case "load":
 		pc.Payload = &SystemMessageLifecycleLoad{}
-	case "kill":
-		pc.Payload = &SystemMessageLifecycleKill{}
+	case "stop":
+		pc.Payload = &SystemMessageLifecycleStop{}
+	case "delete":
+		pc.Payload = &SystemMessageLifecycleDelete{}
 	case "name":
 		pc.Payload = &SystemMessageLifecycleName{}
 	case "status":

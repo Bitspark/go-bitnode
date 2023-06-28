@@ -225,13 +225,27 @@ func (msg *SystemMessageLifecycleLoad) HandleClient(client *Client, reference st
 	return nil
 }
 
-// Lifecycle Load
+// Lifecycle Stop
 
-type SystemMessageLifecycleKill struct {
+type SystemMessageLifecycleStop struct {
+	Timeout float64 `json:"timeout,omitempty"`
 }
 
-func (msg *SystemMessageLifecycleKill) HandleClient(client *Client, reference string) error {
-	if err := client.EmitEvent(bitnode.LifecycleKill); err != nil {
+func (msg *SystemMessageLifecycleStop) HandleClient(client *Client, reference string) error {
+	if err := client.EmitEvent(bitnode.LifecycleStop, msg.Timeout); err != nil {
+		return err
+	}
+	client.send("", nil, reference, false)
+	return nil
+}
+
+// Lifecycle Delete
+
+type SystemMessageLifecycleDelete struct {
+}
+
+func (msg *SystemMessageLifecycleDelete) HandleClient(client *Client, reference string) error {
+	if err := client.EmitEvent(bitnode.LifecycleDelete); err != nil {
 		return err
 	}
 	client.send("", nil, reference, false)

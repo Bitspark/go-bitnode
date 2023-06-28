@@ -61,8 +61,12 @@ func (c *Client) RemoteID() bitnode.SystemID {
 	return c.remoteID
 }
 
-func (c *Client) Kill() {
-	c.NativeSystem.Kill(c.creds)
+func (c *Client) Stop(timeout float64) {
+	c.NativeSystem.Stop(c.creds, timeout)
+}
+
+func (c *Client) Delete() {
+	c.NativeSystem.Delete(c.creds)
 }
 
 func (c *Client) SetName(name string) {
@@ -128,9 +132,21 @@ func (c *Client) EmitLoad() error {
 	return nil
 }
 
-func (c *Client) EmitKill() error {
-	sendStopOrKill := &SystemMessageLifecycleKill{}
-	ret := c.send("kill", sendStopOrKill, "", true)
+func (c *Client) EmitStop(timeout float64) error {
+	sendStop := &SystemMessageLifecycleStop{
+		Timeout: timeout,
+	}
+	ret := c.send("stop", sendStop, "", true)
+	resp := <-ret.ch
+	if err, ok := resp.(error); ok {
+		return err
+	}
+	return nil
+}
+
+func (c *Client) EmitDelete() error {
+	sendLoad := &SystemMessageLifecycleDelete{}
+	ret := c.send("delete", sendLoad, "", true)
 	resp := <-ret.ch
 	if err, ok := resp.(error); ok {
 		return err
@@ -207,7 +223,11 @@ func (c *Client) attachSystem() error {
 		}))
 	}
 
-	c.NativeSystem.AddCallback(bitnode.LifecycleKill, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
+	c.NativeSystem.AddCallback(bitnode.LifecycleStop, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
+		return nil
+	}))
+
+	c.NativeSystem.AddCallback(bitnode.LifecycleDelete, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
 		return nil
 	}))
 

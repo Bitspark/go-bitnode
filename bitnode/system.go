@@ -20,19 +20,20 @@ const (
 	LifecycleStatus = "status"
 	LifecycleLog    = "log"
 	LifecycleStop   = "stop"
-	LifecycleKill   = "kill"
 	LifecycleStart  = "start"
+	LifecycleDelete = "delete"
 )
 
 const (
 	SystemStatusUndefined    = 0
 	SystemStatusStarting     = 1
 	SystemStatusRunning      = 2
-	SystemStatusStopped      = 3
-	SystemStatusKilled       = 4
-	SystemStatusDisconnected = 5
 	SystemStatusStopping     = 6
+	SystemStatusStopped      = 3
+	SystemStatusDeleted      = 8
 	SystemStatusConnecting   = 7
+	SystemStatusConnected    = 9
+	SystemStatusDisconnected = 5
 )
 
 // LifecycleEvent contains events event callbacks.
@@ -64,8 +65,11 @@ type System interface {
 	// Status of this system.
 	Status() int
 
-	// Kill kills the system instantly.
-	Kill()
+	// Stop stops the system.
+	Stop(timeout float64)
+
+	// Delete deletes the system and kills it if necessary.
+	Delete()
 
 	// SetName changes the name of the system.
 	SetName(name string)
@@ -217,8 +221,12 @@ func (s *NativeSystem) Status() int {
 	return s.status
 }
 
-func (s *NativeSystem) Kill(creds Credentials) {
-	_ = s.EmitEvent(LifecycleKill)
+func (s *NativeSystem) Stop(creds Credentials, timeout float64) {
+	_ = s.EmitEvent(LifecycleStop, timeout)
+}
+
+func (s *NativeSystem) Delete(creds Credentials) {
+	_ = s.EmitEvent(LifecycleDelete)
 }
 
 func (s *NativeSystem) SetName(creds Credentials, name string) {
@@ -560,8 +568,12 @@ type CredSystem struct {
 
 var _ System = &CredSystem{}
 
-func (s *CredSystem) Kill() {
-	s.NativeSystem.Kill(s.creds)
+func (s *CredSystem) Stop(timeout float64) {
+	s.NativeSystem.Stop(s.creds, timeout)
+}
+
+func (s *CredSystem) Delete() {
+	s.NativeSystem.Delete(s.creds)
 }
 
 func (s *CredSystem) SetName(name string) {
