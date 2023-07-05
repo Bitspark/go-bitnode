@@ -14,297 +14,9 @@ import (
 	"time"
 )
 
-const heartbeatInterval = 50 * time.Second
-
-const ApiVersion = "1.0"
-
-const Bitnode = "go:1.0"
-
-// NodeConns maintains connections to other nodes.
-type NodeConns struct {
-	node          bitnode.Node
-	conns         map[string]*NodeConn
-	connsMux      sync.Mutex
-	queuedClients map[string]map[string]*Client
-	queueMux      sync.Mutex
-	address       string
-	shutdown      bool
-}
-
-func NewNodeConns(node bitnode.Node, address string) *NodeConns {
-	return &NodeConns{
-		node:          node,
-		conns:         map[string]*NodeConn{},
-		queuedClients: map[string]map[string]*Client{},
-		address:       address,
-	}
-}
-
-func (hc *NodeConns) Load(st store.Store, dom *bitnode.Domain) error {
-	nodeDS, err := st.Ensure("node", store.DSStores)
-	if err != nil {
-		return err
-	}
-	nodeStore := nodeDS.Stores()
-
-	nodeSt, err := nodeStore.Get("node")
-	if err != nil {
-		return err
-	}
-
-	if err := hc.node.Load(nodeSt, dom); err != nil {
-		return err
-	}
-
-	propertiesDS, err := st.Ensure("properties", store.DSKeyValue)
-	if err != nil {
-		return err
-	}
-	propertiesStore := propertiesDS.KeyValue()
-
-	hc.address, _ = propertiesStore.Get("address")
-
-	connsDS, err := st.Ensure("conns", store.DSStores)
-	if err != nil {
-		return err
-	}
-	conssStore := connsDS.Stores()
-
-	for connStore := range conssStore.Enumerate() {
-		nconn := &NodeConn{
-			conns:   hc,
-			clients: map[string]*Client{},
-			refs:    map[string]*NodeRefChan{},
-		}
-		if err := nconn.Load(connStore); err != nil {
-			return err
-		}
-		if nconn.remoteAddress != "" {
-			go nconn.reconnectNode()
-		} else {
-			nconn.active = false
-		}
-	}
-
-	return nil
-}
-
-func (hc *NodeConns) Store(st store.Store) error {
-	propertiesDS, err := st.Ensure("properties", store.DSKeyValue)
-	if err != nil {
-		return err
-	}
-	propertiesStore := propertiesDS.KeyValue()
-
-	if err := propertiesStore.Set("address", hc.address); err != nil {
-		return err
-	}
-
-	connsDS, err := st.Ensure("conns", store.DSStores)
-	if err != nil {
-		return err
-	}
-	conssStore := connsDS.Stores()
-
-	hc.connsMux.Lock()
-	for _, conn := range hc.conns {
-		connSt := store.NewStore(conn.node)
-		if err := conn.Store(connSt); err != nil {
-			return err
-		}
-		if err := conssStore.Add(connSt); err != nil {
-			return err
-		}
-	}
-	hc.connsMux.Unlock()
-
-	nodeDS, err := st.Ensure("node", store.DSStores)
-	if err != nil {
-		return err
-	}
-	nodeStore := nodeDS.Stores()
-
-	nodeSt := store.NewStore("node")
-
-	if err := hc.node.Store(nodeSt); err != nil {
-		return err
-	}
-
-	if err := nodeStore.Add(nodeSt); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (hc *NodeConns) ConnectNode(addr string) (*NodeConn, error) {
-	nconn := &NodeConn{
-		conns:         hc,
-		clients:       map[string]*Client{},
-		refs:          map[string]*NodeRefChan{},
-		remoteAddress: addr,
-	}
-	if err := nconn.connectNode(); err != nil {
-		return nil, err
-	}
-	return nconn, nil
-}
-
-func (hc *NodeConns) AcceptNode(conn *websocket.Conn) (*NodeConn, error) {
-	nconn := &NodeConn{
-		conns:   hc,
-		clients: map[string]*Client{},
-		refs:    map[string]*NodeRefChan{},
-		ws:      conn,
-	}
-	return nconn, nil
-}
-
-func (hc *NodeConns) Node() bitnode.Node {
-	return hc.node
-}
-
-func (hc *NodeConns) GetNodeByName(name string) *NodeConn {
-	hc.connsMux.Lock()
-	defer hc.connsMux.Unlock()
-	for _, conn := range hc.conns {
-		if conn.node == name {
-			return conn
-		}
-	}
-	return nil
-}
-
-func (hc *NodeConns) GetNodeByAddress(addr string) *NodeConn {
-	hc.connsMux.Lock()
-	defer hc.connsMux.Unlock()
-	for _, conn := range hc.conns {
-		if conn.remoteAddress == addr {
-			return conn
-		}
-	}
-	return nil
-}
-
-func (hc *NodeConns) ReconnectClient(node string, cid string, remoteID bitnode.SystemID, creds bitnode.Credentials, native *bitnode.NativeSystem, server bool) (*Client, error) {
-	hc.connsMux.Lock()
-	if conn, ok := hc.conns[node]; !ok {
-		hc.connsMux.Unlock()
-		cl := &Client{
-			NativeSystem: native,
-			cid:          cid,
-			remoteNode:   node,
-			remoteID:     remoteID,
-			created:      time.Now(),
-			server:       server,
-			incomingIDs:  map[string]bool{},
-			creds:        creds,
-			middlewares:  hc.node.Middlewares(),
-			attached:     false,
-		}
-
-		native.SetExtension("ws", &ClientExt{Client: cl})
-
-		hc.queueMux.Lock()
-		queuedClients, _ := hc.queuedClients[node]
-		hc.queueMux.Unlock()
-
-		if queuedClients == nil {
-			queuedClients = map[string]*Client{}
-		}
-		queuedClients[cl.cid] = cl
-
-		hc.queueMux.Lock()
-		hc.queuedClients[node] = queuedClients
-		hc.queueMux.Unlock()
-
-		return nil, nil
-	} else {
-		hc.connsMux.Unlock()
-		var cl *Client
-
-		conn.clientsMux.Lock()
-		if cl, ok = conn.clients[cid]; ok {
-			conn.clientsMux.Unlock()
-			cl.conn = conn
-			cl.remoteNode = node
-			cl.creds = creds
-			cl.NativeSystem = native
-		} else {
-			conn.clientsMux.Unlock()
-			cl = &Client{
-				NativeSystem: native,
-				cid:          cid,
-				conn:         conn,
-				remoteNode:   node,
-				remoteID:     remoteID,
-				created:      time.Now(),
-				server:       server,
-				incomingIDs:  map[string]bool{},
-				creds:        creds,
-				middlewares:  hc.node.Middlewares(),
-				attached:     false,
-			}
-			conn.clientsMux.Lock()
-			conn.clients[cl.cid] = cl
-			conn.clientsMux.Unlock()
-		}
-
-		native.SetExtension("ws", &ClientExt{Client: cl})
-
-		if !cl.server {
-			if err := conn.connectClient(cl); err != nil {
-				return nil, err
-			}
-			if err := cl.connect(); err != nil {
-				return nil, err
-			}
-		}
-
-		return cl, nil
-	}
-}
-
-func (hc *NodeConns) AcceptClient(node string, cid string) (*Client, error) {
-	hc.connsMux.Lock()
-	if h, ok := hc.conns[node]; !ok {
-		hc.connsMux.Unlock()
-		return nil, fmt.Errorf("node not found: %s", node)
-	} else {
-		hc.connsMux.Unlock()
-		c := &Client{
-			cid:         cid,
-			created:     time.Now(),
-			remoteNode:  node,
-			conn:        h,
-			server:      true,
-			incomingIDs: map[string]bool{},
-			middlewares: hc.node.Middlewares(),
-		}
-		h.clientsMux.Lock()
-		h.clients[c.cid] = c
-		h.clientsMux.Unlock()
-		return c, nil
-	}
-}
-
-func (hc *NodeConns) Shutdown() error {
-	hc.shutdown = true
-	hc.connsMux.Lock()
-	defer hc.connsMux.Unlock()
-	for _, c := range hc.conns {
-		c.wsMux.Lock()
-		if c.ws != nil {
-			c.ws.Close()
-		}
-		c.wsMux.Unlock()
-	}
-	return nil
-}
-
-// A NodeConn represents a connection to another node.
-type NodeConn struct {
-	conns           *NodeConns
+// A Conn represents a connection to another node.
+type Conn struct {
+	factory         *WSFactory
 	node            string
 	version         string
 	bitnode         string
@@ -321,7 +33,7 @@ type NodeConn struct {
 	beatCount       int64
 }
 
-func (c *NodeConn) Handle() {
+func (c *Conn) Handle() {
 	for {
 		if hmsg, err := c.Receive(); err != nil {
 			c.Log(bitnode.LogError, err.Error())
@@ -351,8 +63,7 @@ func (c *NodeConn) Handle() {
 		if client.NativeSystem == nil || client.server {
 			continue
 		}
-		client.SetStatus(bitnode.SystemStatusDisconnected)
-		client.LogInfo("Connection lost")
+		_ = client.Native().EmitEvent(bitnode.LifecycleStop, 0.0)
 	}
 
 	if c.remoteAddress == "" {
@@ -363,7 +74,7 @@ func (c *NodeConn) Handle() {
 	}
 }
 
-func (c *NodeConn) Heartbeat(interval time.Duration) {
+func (c *Conn) Heartbeat(interval time.Duration) {
 	for {
 		c.beatCount++
 		c.Send("heartbeat", &NodePayloadHeartbeat{
@@ -374,20 +85,30 @@ func (c *NodeConn) Heartbeat(interval time.Duration) {
 	}
 }
 
-func (c *NodeConn) Node() string {
+func (c *Conn) Node() string {
 	return c.node
 }
 
-func (c *NodeConn) AddClient() (*Client, error) {
-	cl := &Client{
-		cid:         util.RandomString(util.CharsAlphaNum, 8),
-		created:     time.Now(),
-		remoteNode:  c.node,
-		conn:        c,
-		server:      false,
-		incomingIDs: map[string]bool{},
-		middlewares: c.conns.node.Middlewares(),
+func (c *Conn) AddClient() (*Client, error) {
+	sys, err := c.factory.node.BlankSystem("")
+	if err != nil {
+		return nil, err
 	}
+	cl := &Client{
+		NativeSystem: sys,
+		cid:          util.RandomString(util.CharsAlphaNum, 8),
+		created:      time.Now(),
+		remoteNode:   c.node,
+		conn:         c,
+		server:       false,
+		incomingIDs:  map[string]bool{},
+		middlewares:  c.factory.node.Middlewares(),
+	}
+	cl.SetExtension("ws", &ClientExt{Client: cl})
+
+	orig, _ := cl.conn.factory.node.BlankSystem("")
+	cl.AddOrigin("ws", orig)
+
 	c.clientsMux.Lock()
 	c.clients[cl.cid] = cl
 	c.clientsMux.Unlock()
@@ -397,7 +118,7 @@ func (c *NodeConn) AddClient() (*Client, error) {
 	return cl, nil
 }
 
-func (c *NodeConn) Send(cmd string, hmsg NodePayload, reference string, returns bool) *NodeRefChan {
+func (c *Conn) Send(cmd string, hmsg NodePayload, reference string, returns bool) *NodeRefChan {
 	var ret string
 	if reference == "" && returns {
 		ret = util.RandomString(util.CharsAlphaNum, 8)
@@ -428,7 +149,7 @@ func (c *NodeConn) Send(cmd string, hmsg NodePayload, reference string, returns 
 	return ch
 }
 
-func (c *NodeConn) SendError(err error, reference string) {
+func (c *Conn) SendError(err error, reference string) {
 	msgBts, _ := json.Marshal(NodeMessage{
 		Cmd:       "error",
 		Reference: reference,
@@ -441,7 +162,7 @@ func (c *NodeConn) SendError(err error, reference string) {
 	c.wsMux.Unlock()
 }
 
-func (c *NodeConn) Receive() (*NodeMessage, error) {
+func (c *Conn) Receive() (*NodeMessage, error) {
 	msg := &NodeMessage{}
 	msgType, msgBts, err := c.ws.ReadMessage()
 	if err != nil {
@@ -463,11 +184,11 @@ func (c *NodeConn) Receive() (*NodeMessage, error) {
 	return nil, nil
 }
 
-func (c *NodeConn) Log(code int, msg string) {
+func (c *Conn) Log(code int, msg string) {
 	log.Printf("[%s-%d] %s", c.node, code, msg)
 }
 
-func (c *NodeConn) Load(st store.Store) error {
+func (c *Conn) Load(st store.Store) error {
 	connPropsDS, err := st.Ensure("conn", store.DSKeyValue)
 	if err != nil {
 		return err
@@ -480,7 +201,7 @@ func (c *NodeConn) Load(st store.Store) error {
 	return nil
 }
 
-func (c *NodeConn) Store(st store.Store) error {
+func (c *Conn) Store(st store.Store) error {
 	connPropsDS, err := st.Ensure("conn", store.DSKeyValue)
 	if err != nil {
 		return err
@@ -501,7 +222,7 @@ func (c *NodeConn) Store(st store.Store) error {
 	return nil
 }
 
-func (c *NodeConn) connectNode() error {
+func (c *Conn) connectNode() error {
 	u, err := url.Parse(c.remoteAddress + wsPath)
 	if err != nil {
 		return err
@@ -519,7 +240,7 @@ func (c *NodeConn) connectNode() error {
 	ref := c.Send("handshake", &NodePayloadHandshake{
 		Version: ApiVersion,
 		Bitnode: Bitnode,
-		Node:    c.conns.node.Name(),
+		Node:    c.factory.node.Name(),
 	}, "", true)
 	<-ref.ch
 
@@ -528,7 +249,7 @@ func (c *NodeConn) connectNode() error {
 	return nil
 }
 
-func (c *NodeConn) connectClient(cl *Client) error {
+func (c *Conn) connectClient(cl *Client) error {
 	ch := c.Send("new_client", &NodePayloadNewClient{
 		Client: cl.cid,
 	}, "", true)
@@ -540,10 +261,10 @@ func (c *NodeConn) connectClient(cl *Client) error {
 }
 
 // reconnectNode tries to establish a connection to the node again.
-func (c *NodeConn) reconnectNode() {
+func (c *Conn) reconnectNode() {
 	wait := 1 * time.Millisecond
 	for {
-		if c.conns.shutdown {
+		if c.factory.shutdown {
 			return
 		}
 
@@ -562,7 +283,7 @@ func (c *NodeConn) reconnectNode() {
 	}
 }
 
-func (c *NodeConn) reconnectClients() error {
+func (c *Conn) reconnectClients() error {
 	clients := []*Client{}
 	c.clientsMux.Lock()
 	for _, cl := range c.clients {
@@ -583,7 +304,7 @@ func (c *NodeConn) reconnectClients() error {
 	return nil
 }
 
-func (c *NodeConn) takeOver(econn *NodeConn) {
+func (c *Conn) takeOver(econn *Conn) {
 	econn.clientsMux.Lock()
 	if c != econn {
 		c.clientsMux.Lock()
@@ -606,7 +327,7 @@ type NodeMessage struct {
 	Payload   NodePayload `json:"payload,omitempty"`
 }
 
-func (hm *NodeMessage) Handle(nconn *NodeConn) error {
+func (hm *NodeMessage) Handle(nconn *Conn) error {
 	var err error
 	if hm.Payload != nil {
 		err = hm.Payload.Handle(nconn, hm.Request)
@@ -680,7 +401,7 @@ func (hm *NodeMessage) UnmarshalJSON(data []byte) error {
 }
 
 type NodePayload interface {
-	Handle(nconn *NodeConn, reference string) error
+	Handle(nconn *Conn, reference string) error
 }
 
 type NodePayloadHandshake struct {
@@ -690,7 +411,7 @@ type NodePayloadHandshake struct {
 	Address string `json:"address"`
 }
 
-func (p *NodePayloadHandshake) Handle(nconn *NodeConn, reference string) error {
+func (p *NodePayloadHandshake) Handle(nconn *Conn, reference string) error {
 	if p.Version != ApiVersion {
 		return fmt.Errorf("unsupported version: %s", p.Version)
 	}
@@ -706,9 +427,9 @@ func (p *NodePayloadHandshake) Handle(nconn *NodeConn, reference string) error {
 
 	reconnectClients := false
 
-	nconn.conns.connsMux.Lock()
-	if econn, ok := nconn.conns.conns[p.Node]; ok {
-		nconn.conns.connsMux.Unlock()
+	nconn.factory.connsMux.Lock()
+	if econn, ok := nconn.factory.conns[p.Node]; ok {
+		nconn.factory.connsMux.Unlock()
 		nconn.takeOver(econn)
 		if nconn.remoteAddress == "" {
 			reconnectClients = true
@@ -721,18 +442,18 @@ func (p *NodePayloadHandshake) Handle(nconn *NodeConn, reference string) error {
 		econn.refs = map[string]*NodeRefChan{}
 		econn.refsMux.Unlock()
 	} else {
-		nconn.conns.connsMux.Unlock()
+		nconn.factory.connsMux.Unlock()
 	}
-	nconn.conns.connsMux.Lock()
-	nconn.conns.conns[p.Node] = nconn
-	nconn.conns.connsMux.Unlock()
+	nconn.factory.connsMux.Lock()
+	nconn.factory.conns[p.Node] = nconn
+	nconn.factory.connsMux.Unlock()
 
 	if reference != "" {
 		nconn.Send("handshake", &NodePayloadHandshake{
 			Version: ApiVersion,
 			Bitnode: Bitnode,
-			Node:    nconn.conns.node.Name(),
-			Address: nconn.conns.address,
+			Node:    nconn.factory.node.Name(),
+			Address: nconn.factory.address,
 		}, reference, false)
 	}
 
@@ -743,9 +464,9 @@ func (p *NodePayloadHandshake) Handle(nconn *NodeConn, reference string) error {
 		}
 	}
 
-	nconn.conns.queueMux.Lock()
-	queuedClients, _ := nconn.conns.queuedClients[p.Node]
-	nconn.conns.queueMux.Unlock()
+	nconn.factory.queueMux.Lock()
+	queuedClients, _ := nconn.factory.queuedClients[p.Node]
+	nconn.factory.queueMux.Unlock()
 
 	for _, cl := range queuedClients {
 		cl.conn = nconn
@@ -763,9 +484,9 @@ func (p *NodePayloadHandshake) Handle(nconn *NodeConn, reference string) error {
 		}
 	}
 
-	nconn.conns.queueMux.Lock()
-	nconn.conns.queuedClients[p.Node] = nil
-	nconn.conns.queueMux.Unlock()
+	nconn.factory.queueMux.Lock()
+	nconn.factory.queuedClients[p.Node] = nil
+	nconn.factory.queueMux.Unlock()
 
 	return nil
 }
@@ -775,7 +496,7 @@ type NodePayloadHeartbeat struct {
 	Time  float64 `json:"time"`
 }
 
-func (p *NodePayloadHeartbeat) Handle(nconn *NodeConn, reference string) error {
+func (p *NodePayloadHeartbeat) Handle(nconn *Conn, reference string) error {
 	nconn.remoteBeatCount = p.Count
 	nconn.remoteBeatTime = p.Time
 	return nil
@@ -785,8 +506,8 @@ type NodePayloadNewClient struct {
 	Client string `json:"client"`
 }
 
-func (pc *NodePayloadNewClient) Handle(nconn *NodeConn, reference string) error {
-	_, err := nconn.conns.AcceptClient(nconn.node, pc.Client)
+func (pc *NodePayloadNewClient) Handle(nconn *Conn, reference string) error {
+	_, err := nconn.factory.AcceptClient(nconn.node, pc.Client)
 	nconn.Send("", nil, reference, false)
 	return err
 }
@@ -844,6 +565,8 @@ func (pc *NodePayloadClient) UnmarshalJSON(data []byte) error {
 		pc.Payload = &SystemMessageLifecycleLoad{}
 	case "stop":
 		pc.Payload = &SystemMessageLifecycleStop{}
+	case "start":
+		pc.Payload = &SystemMessageLifecycleStart{}
 	case "delete":
 		pc.Payload = &SystemMessageLifecycleDelete{}
 	case "name":
@@ -861,11 +584,11 @@ func (pc *NodePayloadClient) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(hms.Payload, pc.Payload)
 }
 
-func (pc *NodePayloadClient) Handle(nconn *NodeConn, reference string) error {
+func (pc *NodePayloadClient) Handle(nconn *Conn, reference string) error {
 	nconn.clientsMux.Lock()
 	if client, ok := nconn.clients[pc.Client]; !ok {
 		nconn.clientsMux.Unlock()
-		return fmt.Errorf("client not found in %s: %s", nconn.conns.address, pc.Client)
+		return fmt.Errorf("client not found in %s: %s", nconn.factory.address, pc.Client)
 	} else {
 		nconn.clientsMux.Unlock()
 		client.handleMux.Lock()
@@ -881,7 +604,7 @@ type NodePayloadError struct {
 	Error string `json:"error"`
 }
 
-func (p *NodePayloadError) Handle(nconn *NodeConn, reference string) error {
+func (p *NodePayloadError) Handle(nconn *Conn, reference string) error {
 	return fmt.Errorf("%s", p.Error)
 }
 

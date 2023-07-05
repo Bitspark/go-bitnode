@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,6 +29,8 @@ type Node interface {
 	AddSystem(sys *NativeSystem) error
 
 	NewSystem(creds Credentials, m Sparkable, payload ...HubItem) (System, error)
+
+	BlankSystem(name string) (*NativeSystem, error)
 
 	PrepareSystem(creds Credentials, m Sparkable) (System, error)
 
@@ -63,6 +66,7 @@ type NativeNode struct {
 	addresses   map[string]string
 	system      *NativeSystem
 	systems     map[SystemID]*NativeSystem
+	systemsMux  sync.Mutex
 	factories   map[string]Factory
 	middlewares Middlewares
 }
@@ -157,31 +161,37 @@ func (h *NativeNode) NewSystem(creds Credentials, m Sparkable, payload ...HubIte
 
 // PrepareSystem creates a new blank system from an interface on this node and attaches it to the node.
 func (h *NativeNode) PrepareSystem(creds Credentials, m Sparkable) (System, error) {
-	id := GenerateSystemID()
-
 	name := ""
 	if m.Name != "" {
-		name = fmt.Sprintf("%s %s", m.Name, id.Hex()[:4])
-	} else {
-		name = id.Hex()
+		name = fmt.Sprintf("%s %s", m.Name, GenerateSystemID().Hex()[:4])
 	}
+
+	sys, err := h.BlankSystem(name)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := h.ImplementSystem(sys, m); err != nil {
+		return nil, err
+	}
+
+	return sys.Wrap(creds, h.middlewares), nil
+}
+
+func (h *NativeNode) BlankSystem(name string) (*NativeSystem, error) {
+	id := GenerateSystemID()
 
 	// Create the system.
 	sys := &NativeSystem{
-		node:      h,
-		id:        id,
-		name:      name,
-		sparkable: m,
-		systems:   map[SystemID]*NativeSystem{},
-		created:   time.Now(),
-		events:    map[string]*LifecycleEvent{},
-		logs:      util.NewSorted[int64, LogMessage](),
-		impls:     map[string][]SystemExtension{},
-	}
-
-	if m.Interface != nil {
-		sys.extends = m.Interface.CompiledExtends
-		sys.extends = append(sys.extends, m.Domain+DomSep+m.Name+"$")
+		node:    h,
+		id:      id,
+		name:    name,
+		systems: map[SystemID]*NativeSystem{},
+		origins: map[string]*NativeSystem{},
+		created: time.Now(),
+		events:  map[string]*LifecycleEvent{},
+		logs:    util.NewSorted[int64, LogMessage](),
+		impls:   map[string][]SystemExtension{},
 	}
 
 	if err := h.initSystem(sys); err != nil {
@@ -189,25 +199,45 @@ func (h *NativeNode) PrepareSystem(creds Credentials, m Sparkable) (System, erro
 	}
 
 	// Add the system to this node.
+	h.systemsMux.Lock()
 	h.systems[sys.id] = sys
+	h.systemsMux.Unlock()
+
+	return sys, nil
+}
+
+func (h *NativeNode) DefineSystem(sys *NativeSystem, i *Interface) error {
+	if i == nil {
+		return nil
+	}
+
+	sys.extends = i.CompiledExtends
 
 	// Add hubs if interface is present.
-	mi := m.Interface
-	if mi != nil && mi.CompiledHubs != nil {
-		for _, p := range *m.Interface.CompiledHubs {
+	if i.CompiledHubs != nil {
+		for _, p := range *i.CompiledHubs {
 			hub := NewHub(sys, p)
 			sys.hubs = append(sys.hubs, hub)
 		}
 	}
 
-	credSys := sys.Wrap(creds, h.middlewares)
+	return nil
+}
 
-	// Implement the system.
-	if err := m.Implement(h, credSys); err != nil {
-		return nil, err
+func (h *NativeNode) ImplementSystem(sys *NativeSystem, m Sparkable) error {
+	if err := h.DefineSystem(sys, m.Interface); err != nil {
+		return err
 	}
 
-	return credSys, nil
+	sys.sparkable = m
+	sys.extends = append(sys.extends, m.Domain+DomSep+m.Name+"$")
+
+	// Implement the system.
+	if err := m.Implement(h, sys.Wrap(Credentials{}, h.middlewares)); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (h *NativeNode) initSystem(s *NativeSystem) error {
@@ -234,6 +264,14 @@ func (h *NativeNode) initSystem(s *NativeSystem) error {
 			Message: msg,
 		})
 		log.Printf("[%d] %s", level, msg)
+		return nil
+	}))
+
+	s.AddCallback(LifecycleDelete, NewNativeEvent(func(vals ...HubItem) error {
+		h.systemsMux.Lock()
+		delete(h.systems, s.id)
+		h.systemsMux.Unlock()
+
 		return nil
 	}))
 
@@ -312,8 +350,9 @@ func (h *NativeNode) Load(st store.Store, dom *Domain) error {
 
 	for st := range systemStore.Enumerate() {
 		sys := &NativeSystem{
-			impls: map[string][]SystemExtension{},
-			node:  h,
+			impls:   map[string][]SystemExtension{},
+			origins: map[string]*NativeSystem{},
+			node:    h,
 		}
 		if err := sys.LoadInit(h, st); err != nil {
 			return err

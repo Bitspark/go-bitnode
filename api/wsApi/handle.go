@@ -13,6 +13,56 @@ type SystemMessage interface {
 	HandleClient(client *Client, reference string) error
 }
 
+// SystemOrigin provides data about the origins of a hologram.
+type SystemOrigin struct {
+	ID     bitnode.SystemID        `json:"id"`
+	Node   string                  `json:"node"`
+	Name   string                  `json:"name"`
+	Status int                     `json:"status"`
+	Origin map[string]SystemOrigin `json:"origin"`
+}
+
+func getOrigin(sys *bitnode.NativeSystem) SystemOrigin {
+	origs := SystemOrigin{
+		ID:     sys.RemoteID(),
+		Node:   sys.RemoteNode(),
+		Name:   sys.Name(),
+		Status: sys.Status(),
+	}
+	if origs.ID.IsNull() {
+		origs.ID = sys.ID()
+	}
+	if origs.Node == "" {
+		origs.Node = sys.Node().Name()
+	}
+	os := sys.Origins()
+	if len(os) > 0 {
+		origs.Origin = map[string]SystemOrigin{}
+		for _, o := range os {
+			origs.Origin[o.Name] = getOrigin(o.Origin)
+		}
+	}
+	return origs
+}
+
+func (cl *Client) attachOrigin(os SystemOrigin, node *bitnode.NativeNode, sys *bitnode.NativeSystem) error {
+	sys.SetRemoteNode(os.Node)
+	sys.SetRemoteID(os.ID)
+	sys.SetName(bitnode.Credentials{}, os.Name)
+	sys.SetStatus(bitnode.Credentials{}, os.Status)
+	for n, o := range os.Origin {
+		orig, err := node.BlankSystem(o.Name)
+		if err != nil {
+			return err
+		}
+		sys.AddOrigin(n, orig)
+		if err := cl.attachOrigin(o, node, orig); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Conn
 
 // SystemMessageConn is what the client sends to the server to initiate a connection.
@@ -23,7 +73,7 @@ type SystemMessageConn struct {
 
 func (msg *SystemMessageConn) HandleClient(client *Client, reference string) error {
 	if client.NativeSystem == nil {
-		sys, err := client.conn.conns.node.GetSystemByID(client.creds, bitnode.ParseSystemID(msg.ID))
+		sys, err := client.conn.factory.node.GetSystemByID(client.creds, bitnode.ParseSystemID(msg.ID))
 		if err != nil {
 			return err
 		}
@@ -32,11 +82,9 @@ func (msg *SystemMessageConn) HandleClient(client *Client, reference string) err
 	}
 	client.creds = msg.Credentials
 	client.send("init", &SystemMessageInit{
-		ID:        client.ID(),
-		Name:      client.Name(),
-		Status:    client.Status(),
 		Interface: client.Interface(),
 		Extends:   client.Extends(),
+		Origins:   getOrigin(client.Native()),
 	}, reference, false)
 	if err := client.attachSystem(); err != nil {
 		return err
@@ -62,39 +110,41 @@ func (msg *SystemMessageCreds) HandleClient(client *Client, reference string) er
 // SystemMessageInit is what the client receives from the server after initiating a connection and specifying the
 // remote system.
 type SystemMessageInit struct {
-	ID        bitnode.SystemID   `json:"id"`
-	Name      string             `json:"name"`
-	Status    int                `json:"status"`
-	Message   string             `json:"message"`
 	Interface *bitnode.Interface `json:"interface"`
 	Extends   []string           `json:"extends"`
+	Origins   SystemOrigin       `json:"origin"`
 }
 
 func (msg *SystemMessageInit) HandleClient(client *Client, reference string) error {
-	bp := msg.Interface.Blank()
-	if client.NativeSystem == nil {
-		sys, err := client.conn.conns.node.PrepareSystem(client.creds, bp)
-		if err != nil {
+	if client.server {
+		return fmt.Errorf("init: %s not a client", client.cid)
+	}
+
+	if !client.defined {
+		if err := client.conn.factory.node.(*bitnode.NativeNode).ImplementSystem(client.Native(), msg.Interface.Blank()); err != nil {
 			return err
 		}
-		client.NativeSystem = sys.Native()
-		client.SetExtension("ws", &ClientExt{Client: client})
+		client.defined = true
 	}
+
+	orig := client.Origin("ws")
+	if orig == nil {
+		return fmt.Errorf("init: have no ws origin")
+	}
+	if err := client.attachOrigin(msg.Origins, client.conn.factory.node.(*bitnode.NativeNode), orig.Native()); err != nil {
+		return err
+	}
+
 	if !client.attached {
 		if err := client.attachSystem(); err != nil {
 			return err
 		}
 	}
 
-	client.SetName(msg.Name)
-	client.remoteName = msg.Name
-
-	client.SetStatus(msg.Status)
-	client.remoteStatus = msg.Status
-
 	client.SetExtends(msg.Extends)
-
 	client.Extension("ws").(*ClientExt).Connected = true
+
+	_ = client.Native().EmitEvent(bitnode.LifecycleStart)
 
 	return nil
 }
@@ -108,6 +158,9 @@ type SystemMessageInvoke struct {
 }
 
 func (msg *SystemMessageInvoke) HandleClient(client *Client, reference string) error {
+	if !client.server {
+		return fmt.Errorf("invoke: %s not a server", client.cid)
+	}
 	hub := client.GetHub(msg.Hub)
 	if hub == nil {
 		return fmt.Errorf("could not find hub: %s", msg.Hub)
@@ -136,6 +189,9 @@ type SystemMessageReturn struct {
 }
 
 func (msg *SystemMessageReturn) HandleClient(client *Client, reference string) error {
+	if client.server {
+		return fmt.Errorf("return: %s not a client", client.cid)
+	}
 	return nil
 }
 
@@ -239,6 +295,19 @@ func (msg *SystemMessageLifecycleStop) HandleClient(client *Client, reference st
 	return nil
 }
 
+// Lifecycle Start
+
+type SystemMessageLifecycleStart struct {
+}
+
+func (msg *SystemMessageLifecycleStart) HandleClient(client *Client, reference string) error {
+	if err := client.EmitEvent(bitnode.LifecycleStart); err != nil {
+		return err
+	}
+	client.send("", nil, reference, false)
+	return nil
+}
+
 // Lifecycle Delete
 
 type SystemMessageLifecycleDelete struct {
@@ -255,29 +324,45 @@ func (msg *SystemMessageLifecycleDelete) HandleClient(client *Client, reference 
 // Lifecycle Name
 
 type SystemMessageLifecycleName struct {
+	Path string `json:"path,omitempty"`
 	Name string `json:"name"`
 }
 
 func (msg *SystemMessageLifecycleName) HandleClient(client *Client, reference string) error {
+	if client.server {
+		return fmt.Errorf("name: %s not a client", client.cid)
+	}
 	if client.NativeSystem == nil {
 		return nil
 	}
-	client.SetName(msg.Name)
-	client.remoteName = msg.Name
+	path := "ws" + msg.Path
+	orig := client.Origin(path)
+	if orig == nil {
+		return fmt.Errorf("name: path not found: %s", path)
+	}
+	orig.SetName(msg.Name)
 	return nil
 }
 
 // Lifecycle Status
 
 type SystemMessageLifecycleStatus struct {
-	Status int `json:"status"`
+	Path   string `json:"path,omitempty"`
+	Status int    `json:"status"`
 }
 
 func (msg *SystemMessageLifecycleStatus) HandleClient(client *Client, reference string) error {
+	if client.server {
+		return fmt.Errorf("status: %s not a client", client.cid)
+	}
 	if client.NativeSystem == nil {
 		return nil
 	}
-	client.SetStatus(msg.Status)
-	client.remoteStatus = msg.Status
+	path := "ws" + msg.Path
+	orig := client.Origin(path)
+	if orig == nil {
+		return fmt.Errorf("status: path not found: %s", path)
+	}
+	orig.SetStatus(msg.Status)
 	return nil
 }

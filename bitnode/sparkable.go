@@ -146,6 +146,8 @@ var NilItem = HubItem(nil)
 
 // Implement adds this implementation to the system sys.
 func (m *Sparkable) Implement(node *NativeNode, sys System) error {
+	sys.SetStatus(SystemStatusImplementing)
+
 	// Add implementations.
 	for fName, implDatas := range m.Implementation {
 		f, err := node.GetFactory(fName)
@@ -166,6 +168,8 @@ func (m *Sparkable) Implement(node *NativeNode, sys System) error {
 			}
 		}
 	}
+
+	sys.SetStatus((sys.Status() & ^SystemStatusImplementing) | SystemStatusImplemented)
 
 	// Successful.
 	return nil

@@ -16,11 +16,9 @@ type Client struct {
 	// cid is the ID of the client-server connection, chosen by the client.
 	cid string
 
-	conn         *NodeConn
-	remoteNode   string
-	remoteName   string
-	remoteStatus int
-	remoteID     bitnode.SystemID
+	conn       *Conn
+	remoteNode string
+	remoteID   bitnode.SystemID
 
 	created time.Time
 	server  bool
@@ -33,80 +31,103 @@ type Client struct {
 	creds       bitnode.Credentials
 	middlewares bitnode.Middlewares
 
+	// defined indicates that hubs and implementation have already been performed.
+	defined bool
+
+	// attached indicates that this client has already been attached to the underlying NativeSystem.
 	attached bool
 }
 
 var _ bitnode.System = &Client{}
 
 // Connect connects the client to the server and ultimately attaches it to the node.
-func (c *Client) Connect(remoteID bitnode.SystemID, creds bitnode.Credentials) error {
-	if c.NativeSystem != nil {
-		return nil
-	}
+func (cl *Client) Connect(remoteID bitnode.SystemID, creds bitnode.Credentials) error {
 	done := make(chan error)
-	c.remoteID = remoteID
-	c.creds = creds
+	cl.remoteID = remoteID
+	cl.creds = creds
 	go func() {
-		done <- c.connect()
+		done <- cl.connect()
 		close(done)
 	}()
 	return <-done
 }
 
-func (c *Client) RemoteName() string {
-	return c.remoteName
+func (cl *Client) RemoteName() string {
+	return cl.Origin("ws").Name()
 }
 
-func (c *Client) RemoteID() bitnode.SystemID {
-	return c.remoteID
+func (cl *Client) RemoteStatus() int {
+	return cl.Origin("ws").Status()
 }
 
-func (c *Client) Stop(timeout float64) {
-	c.NativeSystem.Stop(c.creds, timeout)
+func (cl *Client) RemoteID() bitnode.SystemID {
+	return cl.remoteID
 }
 
-func (c *Client) Delete() {
-	c.NativeSystem.Delete(c.creds)
+func (cl *Client) Stop(timeout float64) {
+	cl.NativeSystem.Stop(cl.creds, timeout)
 }
 
-func (c *Client) SetName(name string) {
-	c.NativeSystem.SetName(c.creds, name)
+func (cl *Client) Start() {
+	cl.NativeSystem.Start(cl.creds)
 }
 
-func (c *Client) SetStatus(status int) {
-	c.NativeSystem.SetStatus(c.creds, status)
+func (cl *Client) Delete() {
+	cl.NativeSystem.Delete(cl.creds)
 }
 
-func (c *Client) Hubs() []bitnode.Hub {
-	return c.NativeSystem.Hubs(c.creds)
+func (cl *Client) SetName(name string) {
+	cl.NativeSystem.SetName(cl.creds, name)
 }
 
-func (c *Client) GetHub(name string) bitnode.Hub {
-	return c.NativeSystem.GetHub(c.creds, c.middlewares, name)
+func (cl *Client) SetStatus(status int) {
+	cl.NativeSystem.SetStatus(cl.creds, status)
 }
 
-// Connected tells whether the client has been connected already.
-func (c *Client) Connected() bool {
-	return c.NativeSystem != nil
+func (cl *Client) Hubs() []bitnode.Hub {
+	return cl.NativeSystem.Hubs(cl.creds)
 }
 
-func (c *Client) Disconnect() error {
+func (cl *Client) Origins() []bitnode.Origin {
+	syss := []bitnode.Origin{}
+	for _, sys := range cl.NativeSystem.Origins() {
+		syss = append(syss, bitnode.Origin{
+			Name:   sys.Name,
+			Origin: sys.Origin.Wrap(cl.creds, cl.middlewares),
+		})
+	}
+	return syss
+}
+
+func (cl *Client) Origin(name string) bitnode.System {
+	orig := cl.NativeSystem.Origin(name)
+	if orig == nil {
+		return nil
+	}
+	return cl.NativeSystem.Origin(name).Wrap(cl.creds, cl.middlewares)
+}
+
+func (cl *Client) GetHub(name string) bitnode.Hub {
+	return cl.NativeSystem.GetHub(cl.creds, cl.middlewares, name)
+}
+
+func (cl *Client) Disconnect() error {
 	panic("implement me")
 }
 
-func (c *Client) Interface() *bitnode.Interface {
-	if c.NativeSystem == nil {
+func (cl *Client) Interface() *bitnode.Interface {
+	if cl.NativeSystem == nil {
 		return nil
 	}
-	return c.NativeSystem.Interface()
+	return cl.NativeSystem.Interface()
 }
 
-func (c *Client) Active() bool {
-	return c.conn.active
+func (cl *Client) Active() bool {
+	return cl.conn.active
 }
 
-func (c *Client) EmitCreate(ctor bitnode.HubItemsInterface, vals ...bitnode.HubItem) error {
-	vvals, err := c.wrapValues(ctor, vals...)
+func (cl *Client) EmitCreate(ctor bitnode.HubItemsInterface, vals ...bitnode.HubItem) error {
+	vvals, err := cl.wrapValues(ctor, vals...)
 	if err != nil {
 		return err
 	}
@@ -114,39 +135,7 @@ func (c *Client) EmitCreate(ctor bitnode.HubItemsInterface, vals ...bitnode.HubI
 		Params: vvals,
 		Types:  ctor,
 	}
-	ret := c.send("create", sendCreate, "", true)
-	resp := <-ret.ch
-	if err, ok := resp.(error); ok {
-		return err
-	}
-	return nil
-}
-
-func (c *Client) EmitLoad() error {
-	sendLoad := &SystemMessageLifecycleLoad{}
-	ret := c.send("load", sendLoad, "", true)
-	resp := <-ret.ch
-	if err, ok := resp.(error); ok {
-		return err
-	}
-	return nil
-}
-
-func (c *Client) EmitStop(timeout float64) error {
-	sendStop := &SystemMessageLifecycleStop{
-		Timeout: timeout,
-	}
-	ret := c.send("stop", sendStop, "", true)
-	resp := <-ret.ch
-	if err, ok := resp.(error); ok {
-		return err
-	}
-	return nil
-}
-
-func (c *Client) EmitDelete() error {
-	sendLoad := &SystemMessageLifecycleDelete{}
-	ret := c.send("delete", sendLoad, "", true)
+	ret := cl.send("create", sendCreate, "", true)
 	resp := <-ret.ch
 	if err, ok := resp.(error); ok {
 		return err
@@ -155,13 +144,13 @@ func (c *Client) EmitDelete() error {
 }
 
 // send sends a command to the remote node it is connected to.
-func (c *Client) send(cmd string, m SystemMessage, reference string, returns bool) *ClientRefChan {
-	if c.conn == nil {
+func (cl *Client) send(cmd string, m SystemMessage, reference string, returns bool) *ClientRefChan {
+	if cl.conn == nil {
 		panic("connection not found")
 	}
 	chSent := make(chan bool)
 	chRef := &ClientRefChan{cmd: cmd, ch: make(chan any)}
-	go func(c *Client, nconn *NodeConn, chSent chan bool, ch *ClientRefChan, reference string, returns bool) {
+	go func(c *Client, nconn *Conn, chSent chan bool, ch *ClientRefChan, reference string, returns bool) {
 		defer close(ch.ch)
 		ref := nconn.Send("client", &NodePayloadClient{
 			Cmd:     cmd,
@@ -184,7 +173,7 @@ func (c *Client) send(cmd string, m SystemMessage, reference string, returns boo
 			}
 			ch.ch <- msg.(*NodePayloadClient).Payload
 		}
-	}(c, c.conn, chSent, chRef, reference, returns)
+	}(cl, cl.conn, chSent, chRef, reference, returns)
 	<-chSent
 	return chRef
 }
@@ -193,51 +182,45 @@ func (c *Client) send(cmd string, m SystemMessage, reference string, returns boo
 attachSystem attaches callbacks to the system and establishes a connection between the websocket connection and the
 system.
 */
-func (c *Client) attachSystem() error {
-	c.attached = true
-	if c.NativeSystem == nil {
+func (cl *Client) attachSystem() error {
+	cl.attached = true
+	if cl.NativeSystem == nil {
 		return fmt.Errorf("require a system")
 	}
-	hubs := c.Hubs()
+	hubs := cl.Hubs()
 	errs := make(chan error)
 
-	c.NativeSystem.AddCallback(bitnode.LifecycleName, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
-		name := vals[0].(string)
-		if name != c.remoteName {
-			c.send("name", &SystemMessageLifecycleName{
-				Name: name,
-			}, "", false)
+	if cl.server {
+		if err := cl.attachSubSystem(cl.NativeSystem, ""); err != nil {
+			return err
 		}
-		return nil
-	}))
-
-	if c.server {
-		c.NativeSystem.AddCallback(bitnode.LifecycleStatus, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
-			status := vals[0].(int64)
-			if int(status) != c.remoteStatus {
-				c.send("status", &SystemMessageLifecycleStatus{
-					Status: int(status),
-				}, "", false)
-			}
-			return nil
-		}))
 	}
 
-	c.NativeSystem.AddCallback(bitnode.LifecycleStop, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
+	cl.NativeSystem.AddCallback(bitnode.LifecycleStop, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
+		// We disconnect the client.
+
+		// TODO: Disconnect.
+
 		return nil
 	}))
 
-	c.NativeSystem.AddCallback(bitnode.LifecycleDelete, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
+	cl.NativeSystem.AddCallback(bitnode.LifecycleDelete, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
+		// We disconnect and remove the client.
+
+		// TODO: Disconnect.
+
+		// TODO: Remove client.
+
 		return nil
 	}))
 
-	if c.server {
+	if cl.server {
 		for _, hub := range hubs {
-			go func(hub bitnode.Hub) { errs <- c.attachServerHub(hub) }(hub)
+			go func(hub bitnode.Hub) { errs <- cl.attachServerHub(hub) }(hub)
 		}
 	} else {
 		for _, hub := range hubs {
-			go func(hub bitnode.Hub) { errs <- c.attachClientHub(hub) }(hub)
+			go func(hub bitnode.Hub) { errs <- cl.attachClientHub(hub) }(hub)
 		}
 	}
 
@@ -250,7 +233,37 @@ func (c *Client) attachSystem() error {
 	return nil
 }
 
-func (c *Client) attachClientHub(hub bitnode.Hub) error {
+func (cl *Client) attachSubSystem(sys *bitnode.NativeSystem, path string) error {
+	sys.AddCallback(bitnode.LifecycleName, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
+		name := vals[0].(string)
+		cl.send("name", &SystemMessageLifecycleName{
+			Name: name,
+			Path: path,
+		}, "", false)
+		return nil
+	}))
+
+	sys.AddCallback(bitnode.LifecycleStatus, bitnode.NewNativeEvent(func(vals ...bitnode.HubItem) error {
+		status := vals[0].(int64)
+		cl.send("status", &SystemMessageLifecycleStatus{
+			Status: int(status),
+			Path:   path,
+		}, "", false)
+		return nil
+	}))
+
+	origs := sys.Origins()
+	for _, orig := range origs {
+		origPath := fmt.Sprintf("%s/%s", path, orig.Name)
+
+		if err := cl.attachSubSystem(orig.Origin, origPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (cl *Client) attachClientHub(hub bitnode.Hub) error {
 	interf := hub.Interface()
 	if interf == nil {
 		return fmt.Errorf("require interface")
@@ -260,27 +273,27 @@ func (c *Client) attachClientHub(hub bitnode.Hub) error {
 	}
 	switch interf.Type {
 	case bitnode.HubTypePipe:
-		hub.Handle(bitnode.NewNativeFunction(func(creds bitnode.Credentials, vals ...bitnode.HubItem) ([]bitnode.HubItem, error) {
-			if !c.Active() {
-				return nil, fmt.Errorf("client inactive: %s %v", c.cid, c.conn)
+		_ = hub.Handle(bitnode.NewNativeFunction(func(creds bitnode.Credentials, vals ...bitnode.HubItem) ([]bitnode.HubItem, error) {
+			if !cl.Active() {
+				return nil, fmt.Errorf("client inactive: %s %v", cl.cid, cl.conn)
 			}
-			wrappedVals, err := c.wrapValues(interf.Input, vals...)
+			wrappedVals, err := cl.wrapValues(interf.Input, vals...)
 			if err != nil {
-				c.LogError(err)
+				cl.LogError(err)
 				return nil, err
 			}
-			invoke := c.send("invoke", &SystemMessageInvoke{
+			invoke := cl.send("invoke", &SystemMessageInvoke{
 				Hub:   hub.Name(),
 				Value: wrappedVals,
 			}, "", true)
 			if wrappedRets, err := invoke.await(); err != nil {
-				c.LogError(err)
+				cl.LogError(err)
 				return nil, err
 			} else {
 				wrappedVals := wrappedRets.(*SystemMessageReturn)
-				rets, err := c.unwrapValues(interf.Output, wrappedVals.Return...)
+				rets, err := cl.unwrapValues(interf.Output, wrappedVals.Return...)
 				if err != nil {
-					c.LogError(err)
+					cl.LogError(err)
 					return nil, err
 				}
 				return rets, nil
@@ -288,22 +301,22 @@ func (c *Client) attachClientHub(hub bitnode.Hub) error {
 		}))
 
 	case bitnode.HubTypeValue:
-		hub.Subscribe(bitnode.NewNativeSubscription(func(id string, creds bitnode.Credentials, val bitnode.HubItem) {
-			if !c.Active() {
+		_, _ = hub.Subscribe(bitnode.NewNativeSubscription(func(id string, creds bitnode.Credentials, val bitnode.HubItem) {
+			if !cl.Active() {
 				return
 			}
-			c.incomingMux.Lock()
-			if c.incomingIDs[id] {
-				c.incomingMux.Unlock()
+			cl.incomingMux.Lock()
+			if cl.incomingIDs[id] {
+				cl.incomingMux.Unlock()
 				return
 			}
-			c.incomingMux.Unlock()
-			wrappedVal, err := c.wrapValue(*interf.Value, val)
+			cl.incomingMux.Unlock()
+			wrappedVal, err := cl.wrapValue(*interf.Value, val)
 			if err != nil {
-				c.LogError(err)
+				cl.LogError(err)
 				return
 			}
-			c.send("push", &SystemMessagePush{
+			cl.send("push", &SystemMessagePush{
 				Hub:   hub.Name(),
 				ID:    id,
 				Value: wrappedVal,
@@ -311,16 +324,16 @@ func (c *Client) attachClientHub(hub bitnode.Hub) error {
 		}))
 
 	case bitnode.HubTypeChannel:
-		hub.Subscribe(bitnode.NewNativeSubscription(func(id string, creds bitnode.Credentials, val bitnode.HubItem) {
-			if !c.Active() {
+		_, _ = hub.Subscribe(bitnode.NewNativeSubscription(func(id string, creds bitnode.Credentials, val bitnode.HubItem) {
+			if !cl.Active() {
 				return
 			}
-			wrappedVals, err := c.wrapValue(*interf.Value, val)
+			wrappedVals, err := cl.wrapValue(*interf.Value, val)
 			if err != nil {
-				c.LogError(err)
+				cl.LogError(err)
 				return
 			}
-			c.send("push", &SystemMessagePush{
+			cl.send("push", &SystemMessagePush{
 				Hub:   hub.Name(),
 				ID:    id,
 				Value: wrappedVals,
@@ -330,7 +343,7 @@ func (c *Client) attachClientHub(hub bitnode.Hub) error {
 	return nil
 }
 
-func (c *Client) attachServerHub(hub bitnode.Hub) error {
+func (cl *Client) attachServerHub(hub bitnode.Hub) error {
 	interf := hub.Interface()
 	if interf == nil {
 		return fmt.Errorf("require interface")
@@ -340,16 +353,16 @@ func (c *Client) attachServerHub(hub bitnode.Hub) error {
 	}
 	switch interf.Type {
 	case bitnode.HubTypeChannel:
-		hub.Subscribe(bitnode.NewNativeSubscription(func(id string, creds bitnode.Credentials, val bitnode.HubItem) {
-			if !c.Active() {
+		_, _ = hub.Subscribe(bitnode.NewNativeSubscription(func(id string, creds bitnode.Credentials, val bitnode.HubItem) {
+			if !cl.Active() {
 				return
 			}
-			wrappedVals, err := c.wrapValue(*interf.Value, val)
+			wrappedVals, err := cl.wrapValue(*interf.Value, val)
 			if err != nil {
-				c.LogError(err)
+				cl.LogError(err)
 				return
 			}
-			c.send("push", &SystemMessagePush{
+			cl.send("push", &SystemMessagePush{
 				Hub:   hub.Name(),
 				ID:    id,
 				Value: wrappedVals,
@@ -357,120 +370,114 @@ func (c *Client) attachServerHub(hub bitnode.Hub) error {
 		}))
 
 	case bitnode.HubTypeValue:
-		hub.Subscribe(bitnode.NewNativeSubscription(func(id string, creds bitnode.Credentials, val bitnode.HubItem) {
-			if !c.Active() {
+		_, _ = hub.Subscribe(bitnode.NewNativeSubscription(func(id string, creds bitnode.Credentials, val bitnode.HubItem) {
+			if !cl.Active() {
 				return
 			}
-			c.incomingMux.Lock()
-			if c.incomingIDs[id] {
-				c.incomingMux.Unlock()
+			cl.incomingMux.Lock()
+			if cl.incomingIDs[id] {
+				cl.incomingMux.Unlock()
 				return
 			}
-			c.incomingMux.Unlock()
-			wrappedVal, err := c.wrapValue(*interf.Value, val)
+			cl.incomingMux.Unlock()
+			wrappedVal, err := cl.wrapValue(*interf.Value, val)
 			if err != nil {
-				c.LogError(err)
+				cl.LogError(err)
 				return
 			}
-			c.send("push", &SystemMessagePush{
+			cl.send("push", &SystemMessagePush{
 				Hub:   hub.Name(),
 				ID:    id,
 				Value: wrappedVal,
 			}, "", false)
 		}))
-		//val, _ := hub.Get()
-		//c.send("push", &SystemMessagePush{
-		//	Hub:   hub.Name(),
-		//	ID:    "",
-		//	Value: val,
-		//}, "", false)
 	}
 	return nil
 }
 
 // wrapValues transforms native values into values that can be transferred via websocket.
-func (c *Client) wrapValues(interf bitnode.HubItemsInterface, unwrappedVals ...bitnode.HubItem) ([]bitnode.HubItem, error) {
+func (cl *Client) wrapValues(interf bitnode.HubItemsInterface, unwrappedVals ...bitnode.HubItem) ([]bitnode.HubItem, error) {
 	wrappers := &bitnode.Middlewares{}
-	wrappers.PushBack(&systemWrapper{c: c})
-	wrappers.PushBack(&sparkableWrapper{c: c})
-	wrappers.PushBack(&interfaceWrapper{c: c})
-	wrappers.PushBack(&typeWrapper{c: c})
-	wrappers.PushBack(&credsWrapper{c: c})
-	wrappers.PushBack(&idWrapper{c: c})
+	wrappers.PushBack(&systemWrapper{c: cl})
+	wrappers.PushBack(&sparkableWrapper{c: cl})
+	wrappers.PushBack(&interfaceWrapper{c: cl})
+	wrappers.PushBack(&typeWrapper{c: cl})
+	wrappers.PushBack(&credsWrapper{c: cl})
+	wrappers.PushBack(&idWrapper{c: cl})
 	return interf.ApplyMiddlewares(*wrappers, true, unwrappedVals...)
 }
 
 // wrapValue transforms a native value into values that can be transferred via websocket.
-func (c *Client) wrapValue(interf bitnode.HubItemInterface, unwrappedVal bitnode.HubItem) (bitnode.HubItem, error) {
+func (cl *Client) wrapValue(interf bitnode.HubItemInterface, unwrappedVal bitnode.HubItem) (bitnode.HubItem, error) {
 	wrappers := &bitnode.Middlewares{}
-	wrappers.PushBack(&systemWrapper{c: c})
-	wrappers.PushBack(&sparkableWrapper{c: c})
-	wrappers.PushBack(&interfaceWrapper{c: c})
-	wrappers.PushBack(&typeWrapper{c: c})
-	wrappers.PushBack(&credsWrapper{c: c})
-	wrappers.PushBack(&idWrapper{c: c})
+	wrappers.PushBack(&systemWrapper{c: cl})
+	wrappers.PushBack(&sparkableWrapper{c: cl})
+	wrappers.PushBack(&interfaceWrapper{c: cl})
+	wrappers.PushBack(&typeWrapper{c: cl})
+	wrappers.PushBack(&credsWrapper{c: cl})
+	wrappers.PushBack(&idWrapper{c: cl})
 	return interf.ApplyMiddlewares(*wrappers, unwrappedVal, true)
 }
 
 // unwrapValues transforms websocket values into native values.
-func (c *Client) unwrapValues(interf bitnode.HubItemsInterface, wrappedVals ...bitnode.HubItem) ([]bitnode.HubItem, error) {
+func (cl *Client) unwrapValues(interf bitnode.HubItemsInterface, wrappedVals ...bitnode.HubItem) ([]bitnode.HubItem, error) {
 	unwrappers := &bitnode.Middlewares{}
-	unwrappers.PushBack(&systemWrapper{c: c})
-	unwrappers.PushBack(&sparkableWrapper{c: c})
-	unwrappers.PushBack(&interfaceWrapper{c: c})
-	unwrappers.PushBack(&typeWrapper{c: c})
-	unwrappers.PushBack(&credsWrapper{c: c})
-	unwrappers.PushBack(&idWrapper{c: c})
+	unwrappers.PushBack(&systemWrapper{c: cl})
+	unwrappers.PushBack(&sparkableWrapper{c: cl})
+	unwrappers.PushBack(&interfaceWrapper{c: cl})
+	unwrappers.PushBack(&typeWrapper{c: cl})
+	unwrappers.PushBack(&credsWrapper{c: cl})
+	unwrappers.PushBack(&idWrapper{c: cl})
 	return interf.ApplyMiddlewares(*unwrappers, false, wrappedVals...)
 }
 
 // unwrapValue transforms a websocket value into native values.
-func (c *Client) unwrapValue(interf bitnode.HubItemInterface, wrappedVal bitnode.HubItem) (bitnode.HubItem, error) {
+func (cl *Client) unwrapValue(interf bitnode.HubItemInterface, wrappedVal bitnode.HubItem) (bitnode.HubItem, error) {
 	unwrappers := &bitnode.Middlewares{}
-	unwrappers.PushBack(&systemWrapper{c: c})
-	unwrappers.PushBack(&sparkableWrapper{c: c})
-	unwrappers.PushBack(&interfaceWrapper{c: c})
-	unwrappers.PushBack(&typeWrapper{c: c})
-	unwrappers.PushBack(&credsWrapper{c: c})
-	unwrappers.PushBack(&idWrapper{c: c})
+	unwrappers.PushBack(&systemWrapper{c: cl})
+	unwrappers.PushBack(&sparkableWrapper{c: cl})
+	unwrappers.PushBack(&interfaceWrapper{c: cl})
+	unwrappers.PushBack(&typeWrapper{c: cl})
+	unwrappers.PushBack(&credsWrapper{c: cl})
+	unwrappers.PushBack(&idWrapper{c: cl})
 	return interf.ApplyMiddlewares(*unwrappers, wrappedVal, false)
 }
 
-func (c *Client) Systems() []bitnode.System {
+func (cl *Client) Systems() []bitnode.System {
 	syss := []bitnode.System{}
-	for _, sys := range c.NativeSystem.Systems() {
-		syss = append(syss, sys.Wrap(c.creds, c.middlewares))
+	for _, sys := range cl.NativeSystem.Systems() {
+		syss = append(syss, sys.Wrap(cl.creds, cl.middlewares))
 	}
 	return syss
 }
 
-func (c *Client) Native() *bitnode.NativeSystem {
-	return c.NativeSystem
+func (cl *Client) Native() *bitnode.NativeSystem {
+	return cl.NativeSystem
 }
 
-func (c *Client) Credentials() bitnode.Credentials {
-	return c.creds
+func (cl *Client) Credentials() bitnode.Credentials {
+	return cl.creds
 }
 
-func (c *Client) SetCredentials(creds bitnode.Credentials) {
-	c.creds = creds
-	ret := c.send("creds", &SystemMessageCreds{
+func (cl *Client) SetCredentials(creds bitnode.Credentials) {
+	cl.creds = creds
+	ret := cl.send("creds", &SystemMessageCreds{
 		Credentials: creds,
 	}, "", true)
 	<-ret.ch
 }
 
-func (c *Client) Middlewares() bitnode.Middlewares {
-	return c.middlewares
+func (cl *Client) Middlewares() bitnode.Middlewares {
+	return cl.middlewares
 }
 
-func (c *Client) connect() error {
-	if c.server {
+func (cl *Client) connect() error {
+	if cl.server {
 		panic("server clients cannot connect to a server")
 	}
-	ret := c.send("conn", &SystemMessageConn{
-		ID:          c.remoteID.Hex(),
-		Credentials: c.creds,
+	ret := cl.send("conn", &SystemMessageConn{
+		ID:          cl.remoteID.Hex(),
+		Credentials: cl.creds,
 	}, "", true)
 	if _, err := ret.await(); err != nil {
 		return err

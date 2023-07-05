@@ -6,7 +6,6 @@ import (
 	"github.com/Bitspark/go-bitnode/store"
 	"github.com/Bitspark/go-bitnode/util"
 	"log"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,25 +14,36 @@ import (
 const (
 	LifecycleCreate = "create"
 	LifecycleLoad   = "load"
-	LifecycleStore  = "store"
-	LifecycleName   = "name"
-	LifecycleStatus = "status"
-	LifecycleLog    = "log"
 	LifecycleStop   = "stop"
 	LifecycleStart  = "start"
 	LifecycleDelete = "delete"
+
+	LifecycleStore = "store"
+
+	LifecycleName   = "name"
+	LifecycleStatus = "status"
+	LifecycleLog    = "log"
 )
 
 const (
-	SystemStatusUndefined    = 0
-	SystemStatusStarting     = 1
-	SystemStatusRunning      = 2
-	SystemStatusStopping     = 6
-	SystemStatusStopped      = 3
-	SystemStatusDeleted      = 8
-	SystemStatusConnecting   = 7
-	SystemStatusConnected    = 9
-	SystemStatusDisconnected = 5
+	SystemStatusUndefined = 0
+
+	SystemStatusImplementing = 1 << (iota - 1)
+	SystemStatusImplemented
+
+	SystemStatusCreating
+	SystemStatusCreated
+
+	SystemStatusLoading
+	SystemStatusLoaded
+
+	SystemStatusStopping
+	SystemStatusStarting
+
+	SystemStatusRunning
+
+	SystemStatusDeleting
+	SystemStatusDeleted
 )
 
 // LifecycleEvent contains events event callbacks.
@@ -47,6 +57,16 @@ type LogMessage struct {
 	Level   int       `json:"level" yaml:"level"`
 	Time    time.Time `json:"time" yaml:"time"`
 	Message string    `json:"message" yaml:"message"`
+}
+
+type NativeLink struct {
+	Name   string
+	Origin *NativeSystem
+}
+
+type Origin struct {
+	Name   string
+	Origin System
 }
 
 type System interface {
@@ -68,13 +88,16 @@ type System interface {
 	// Stop stops the system.
 	Stop(timeout float64)
 
+	// Start starts the system.
+	Start()
+
 	// Delete deletes the system and kills it if necessary.
 	Delete()
 
 	// SetName changes the name of the system.
 	SetName(name string)
 
-	// SetStatus changes the status of the system.
+	// SetStatus sets the provided status on top of the current status. Negative values are unset.
 	SetStatus(status int)
 
 	// GetHub returns a hub of this system.
@@ -82,6 +105,12 @@ type System interface {
 
 	// Hubs returns all hubs of this system.
 	Hubs() []Hub
+
+	// An Origins returns the holograms serving as origin.
+	Origins() []Origin
+
+	// An Origin is a hologram which serves as master for this System.
+	Origin(name string) System
 
 	// LogDebug logs a debug message.
 	LogDebug(msg string)
@@ -126,6 +155,10 @@ type System interface {
 	Sparkable() *Sparkable
 
 	Native() *NativeSystem
+
+	RemoteID() SystemID
+
+	RemoteNode() string
 
 	Credentials() Credentials
 
@@ -179,6 +212,10 @@ type NativeSystem struct {
 	// The systems which are children of this system and should be destroyed together with it.
 	systems map[SystemID]*NativeSystem
 
+	origins map[string]*NativeSystem
+
+	parents []NativeLink
+
 	// created is the time when the system has been created.
 	created time.Time
 
@@ -198,11 +235,22 @@ type NativeSystem struct {
 
 	status int
 
-	message string
+	remoteID SystemID
+
+	remoteNode string
 
 	eventsMux sync.Mutex
 
 	implMux sync.Mutex
+}
+
+// SystemInfo stores information about a system.
+type SystemInfo struct {
+	// Status of the system.
+	Status int `json:"status" yaml:"status"`
+
+	// Logs of the system.
+	Logs util.Sorted[int64, LogMessage]
 }
 
 func (s *NativeSystem) Node() Node {
@@ -223,6 +271,10 @@ func (s *NativeSystem) Status() int {
 
 func (s *NativeSystem) Stop(creds Credentials, timeout float64) {
 	_ = s.EmitEvent(LifecycleStop, timeout)
+}
+
+func (s *NativeSystem) Start(creds Credentials) {
+	_ = s.EmitEvent(LifecycleStart)
 }
 
 func (s *NativeSystem) Delete(creds Credentials) {
@@ -310,6 +362,43 @@ func (s *NativeSystem) getHub(hubName string) *NativeHub {
 	return nil
 }
 
+func (s *NativeSystem) Origins() []NativeLink {
+	syss := []NativeLink{}
+	for name, sys := range s.origins {
+		syss = append(syss, NativeLink{
+			Name:   name,
+			Origin: sys,
+		})
+	}
+	return syss
+}
+
+func (s *NativeSystem) Origin(name string) *NativeSystem {
+	if name == "" {
+		return s
+	}
+	return s.origin(strings.Split(name, "/"))
+}
+
+func (s *NativeSystem) origin(path []string) *NativeSystem {
+	if len(path) == 0 {
+		return s
+	}
+	orig, _ := s.origins[path[0]]
+	if orig == nil {
+		return nil
+	}
+	return orig.origin(path[1:])
+}
+
+func (s *NativeSystem) AddOrigin(name string, origin *NativeSystem) {
+	s.origins[name] = origin
+	origin.parents = append(origin.parents, NativeLink{
+		Name:   name,
+		Origin: s,
+	})
+}
+
 func (s *NativeSystem) Hubs(creds Credentials) []Hub {
 	hubs := []Hub{}
 	for _, h := range s.hubs {
@@ -343,16 +432,59 @@ func (s *NativeSystem) AddCallback(event string, impl EventImpl) {
 
 // EmitEvent emits a new events event.
 func (s *NativeSystem) EmitEvent(name string, args ...HubItem) error {
+	preStatus := SystemStatusUndefined
+	postStatus := SystemStatusUndefined
+
+	switch name {
+	case LifecycleCreate:
+		preStatus = SystemStatusCreating
+		postStatus = SystemStatusCreated
+
+	case LifecycleLoad:
+		preStatus = SystemStatusLoading
+		postStatus = SystemStatusLoaded
+
+	case LifecycleStart:
+		preStatus = SystemStatusStarting
+		postStatus = SystemStatusRunning
+
+	case LifecycleStop:
+		preStatus = SystemStatusStopping
+		postStatus = -SystemStatusRunning
+
+	case LifecycleDelete:
+		preStatus = SystemStatusDeleting
+		postStatus = SystemStatusDeleted
+	}
+
+	oldStatus := s.Status()
+
+	if preStatus != SystemStatusUndefined {
+		s.SetStatus(Credentials{}, oldStatus|preStatus)
+	}
+
 	s.eventsMux.Lock()
 	events, _ := s.events[name]
 	s.eventsMux.Unlock()
 	if events != nil {
 		for _, cb := range events.Callbacks {
 			if err := cb.CB(args...); err != nil {
+				if preStatus != SystemStatusUndefined {
+					s.SetStatus(Credentials{}, oldStatus & ^preStatus)
+				}
 				return err
 			}
 		}
 	}
+
+	if preStatus != SystemStatusUndefined || postStatus != SystemStatusUndefined {
+		if postStatus >= 0 {
+			s.SetStatus(Credentials{}, (s.Status() & ^preStatus)|postStatus)
+		} else {
+			s.SetStatus(Credentials{}, (s.Status() & ^preStatus) & ^(-postStatus))
+		}
+	}
+
 	return nil
 }
 
@@ -381,15 +513,20 @@ func (s *NativeSystem) Connect() error {
 	return nil
 }
 
+type origSt struct {
+	Name   string   `json:"name"`
+	Origin SystemID `json:"systemId"`
+}
+
 func (s *NativeSystem) Store(st store.Store) error {
 	systemStoreDS, _ := st.Ensure("system", store.DSKeyValue)
 	systemStore := systemStoreDS.KeyValue()
 
 	_ = systemStore.Set("id", s.id.Hex())
 	_ = systemStore.Set("name", s.name)
-	_ = systemStore.Set("status", fmt.Sprintf("%d", s.status))
-	_ = systemStore.Set("message", s.message)
 	_ = systemStore.Set("extends", strings.Join(s.extends, ","))
+	_ = systemStore.Set("remoteNode", s.remoteNode)
+	_ = systemStore.Set("remoteID", s.remoteID.Hex())
 
 	bp, _ := s.Sparkable().ToInterface()
 	bpJSON, _ := json.Marshal(bp)
@@ -425,9 +562,20 @@ func (s *NativeSystem) Store(st store.Store) error {
 		_ = childStore.Set(sys.ID().Hex(), sys.Name())
 	}
 
+	origs := []origSt{}
+	for name, o := range s.origins {
+		origs = append(origs, origSt{
+			Name:   name,
+			Origin: o.ID(),
+		})
+	}
+	originsBts, _ := json.Marshal(origs)
+	_ = systemStore.Set("origins", string(originsBts))
+
 	return nil
 }
 
+// LoadInit loads all information which does not require other systems.
 func (s *NativeSystem) LoadInit(node *NativeNode, st store.Store) error {
 	s.node = node
 	s.systems = map[SystemID]*NativeSystem{}
@@ -444,9 +592,9 @@ func (s *NativeSystem) LoadInit(node *NativeNode, st store.Store) error {
 	s.id = ParseSystemID(idStr)
 
 	s.name, _ = systemStore.Get("name")
-	status, _ := systemStore.Get("status")
-	s.status, _ = strconv.Atoi(status)
-	s.message, _ = systemStore.Get("message")
+	s.remoteNode, _ = systemStore.Get("remoteNode")
+	remoteIDStr, _ := systemStore.Get("remoteID")
+	s.remoteID = ParseSystemID(remoteIDStr)
 
 	extends, _ := systemStore.Get("extends")
 	s.extends = strings.Split(extends, ",")
@@ -454,6 +602,7 @@ func (s *NativeSystem) LoadInit(node *NativeNode, st store.Store) error {
 	return nil
 }
 
+// Load loads parts of the system state which require other systems (e.g., hub values).
 func (s *NativeSystem) Load(node *NativeNode, dom *Domain, st store.Store) error {
 	systemStoreDS, _ := st.Ensure("system", store.DSKeyValue)
 	systemStore := systemStoreDS.KeyValue()
@@ -511,6 +660,17 @@ func (s *NativeSystem) Load(node *NativeNode, dom *Domain, st store.Store) error
 		s.systems[chID] = nil
 	}
 
+	origins, _ := systemStore.Get("origins")
+	origs := []origSt{}
+	_ = json.Unmarshal([]byte(origins), &origs)
+	for _, o := range origs {
+		orig, err := node.GetSystemByID(Credentials{}, o.Origin)
+		if err != nil {
+			return err
+		}
+		s.AddOrigin(o.Name, orig.Native())
+	}
+
 	return nil
 }
 
@@ -560,6 +720,22 @@ func (s *NativeSystem) Extends() []string {
 	return s.extends
 }
 
+func (s *NativeSystem) SetRemoteID(id SystemID) {
+	s.remoteID = id
+}
+
+func (s *NativeSystem) SetRemoteNode(node string) {
+	s.remoteNode = node
+}
+
+func (s *NativeSystem) RemoteID() SystemID {
+	return s.remoteID
+}
+
+func (s *NativeSystem) RemoteNode() string {
+	return s.remoteNode
+}
+
 type CredSystem struct {
 	*NativeSystem
 	creds       Credentials
@@ -570,6 +746,10 @@ var _ System = &CredSystem{}
 
 func (s *CredSystem) Stop(timeout float64) {
 	s.NativeSystem.Stop(s.creds, timeout)
+}
+
+func (s *CredSystem) Start() {
+	s.NativeSystem.Start(s.creds)
 }
 
 func (s *CredSystem) Delete() {
@@ -590,6 +770,22 @@ func (s *CredSystem) GetHub(hubName string) Hub {
 
 func (s *CredSystem) Hubs() []Hub {
 	return s.NativeSystem.Hubs(s.creds)
+}
+
+func (s *CredSystem) Origins() []Origin {
+	syss := []Origin{}
+	for n, sys := range s.origins {
+		syss = append(syss, Origin{Name: n, Origin: sys.Wrap(s.creds, s.middlewares)})
+	}
+	return syss
+}
+
+func (s *CredSystem) Origin(name string) System {
+	orig := s.NativeSystem.Origin(name)
+	if orig == nil {
+		return nil
+	}
+	return orig.Wrap(s.creds, s.middlewares)
 }
 
 func (s *CredSystem) Systems() []System {
@@ -697,13 +893,13 @@ type SystemExtension interface {
 }
 
 func WaitFor(sys System, status int) {
-	if sys.Status() == status {
+	if sys.Status()&status == status {
 		return
 	}
 	ch := make(chan bool)
 	sys.AddCallback(LifecycleStatus, NewNativeEvent(func(vals ...HubItem) error {
 		newStatus := vals[0].(int64)
-		if int(newStatus) == status {
+		if int(newStatus)&status == status {
 			ch <- true
 		}
 		return nil

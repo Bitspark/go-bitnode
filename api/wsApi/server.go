@@ -16,11 +16,11 @@ type Server struct {
 	httpServer *http.Server
 	wsUpgrader websocket.Upgrader
 	errors     chan error
-	conns      *NodeConns
+	wsFactory  *WSFactory
 	mux        sync.Mutex
 }
 
-func NewServer(conns *NodeConns, localAddr string) *Server {
+func NewServer(wsFactory *WSFactory, localAddr string) *Server {
 	s := &Server{
 		addr: localAddr,
 		httpServer: &http.Server{
@@ -33,7 +33,7 @@ func NewServer(conns *NodeConns, localAddr string) *Server {
 				return true
 			},
 		},
-		conns: conns,
+		wsFactory: wsFactory,
 	}
 	handler := mux.NewRouter()
 	handler.HandleFunc(wsPath, func(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +59,7 @@ func (s *Server) Listen() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	if err := s.conns.Shutdown(); err != nil {
+	if err := s.wsFactory.Shutdown(); err != nil {
 		log.Println(err)
 	}
 	return s.httpServer.Shutdown(ctx)
@@ -67,15 +67,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) Clients() []*Client {
 	clients := []*Client{}
-	s.conns.connsMux.Lock()
-	for _, hc := range s.conns.conns {
+	s.wsFactory.connsMux.Lock()
+	for _, hc := range s.wsFactory.conns {
 		hc.clientsMux.Lock()
 		for _, c := range hc.clients {
 			clients = append(clients, c)
 		}
 		hc.clientsMux.Unlock()
 	}
-	s.conns.connsMux.Unlock()
+	s.wsFactory.connsMux.Unlock()
 	return clients
 }
 
@@ -85,13 +85,13 @@ func (s *Server) Log(code int, msg string) {
 
 // Private
 
-func (s *Server) acceptNode(w http.ResponseWriter, r *http.Request) (*NodeConn, error) {
+func (s *Server) acceptNode(w http.ResponseWriter, r *http.Request) (*Conn, error) {
 	conn, err := s.wsUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	if conn, err := s.conns.AcceptNode(conn); err != nil {
+	if conn, err := s.wsFactory.AcceptNode(conn); err != nil {
 		return nil, err
 	} else {
 		return conn, nil
