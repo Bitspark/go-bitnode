@@ -18,7 +18,6 @@ func TestConn1(t *testing.T) {
 	server1 := NewServer(conns1, "0.0.0.0:12340")
 	defer server1.Shutdown(context.Background())
 	go server1.Listen()
-
 	time.Sleep(200 * time.Millisecond)
 
 	conn2, err := conns2.ConnectNode("ws://127.0.0.1:12340")
