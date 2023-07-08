@@ -134,16 +134,16 @@ type System interface {
 	AddCallback(event string, impl EventImpl)
 
 	// AddExtension attaches a system extension to the system.
-	AddExtension(name string, impl SystemExtension)
+	AddExtension(name string, impl FactorySystem)
 
 	// SetExtension sets a system extension of the system.
-	SetExtension(name string, impl SystemExtension)
+	SetExtension(name string, impl FactorySystem)
 
 	// Extensions returns extensions by name.
-	Extensions(name string) []SystemExtension
+	Extensions(name string) []FactorySystem
 
 	// Extension returns an extension by name.
-	Extension(name string) SystemExtension
+	Extension(name string) FactorySystem
 
 	// AddSystem attaches a system.
 	AddSystem(sys *NativeSystem) error
@@ -151,8 +151,8 @@ type System interface {
 	// Systems returns child systems.
 	Systems() []System
 
-	// Sparkable returns the sparkable.
-	Sparkable() *Sparkable
+	// Sparkable returns the sparkable with can be used to re-create the same system.
+	Sparkable() (*Sparkable, error)
 
 	Native() *NativeSystem
 
@@ -194,6 +194,11 @@ func NewNativeEvent(cb func(vals ...HubItem) error) EventImpl {
 	}
 }
 
+type FactoryExtension struct {
+	Factory string
+	System  FactorySystem
+}
+
 type NativeSystem struct {
 	node *NativeNode
 
@@ -231,7 +236,7 @@ type NativeSystem struct {
 	// extends these interfaces.
 	extends []string
 
-	impls map[string][]SystemExtension
+	extensions []FactoryExtension
 
 	status int
 
@@ -293,7 +298,7 @@ func (s *NativeSystem) Constructor() HubItemsInterface {
 	return s.sparkable.Constructor
 }
 
-func (s *NativeSystem) Sparkable() *Sparkable {
+func (s *NativeSystem) Sparkable() (*Sparkable, error) {
 	bp := &Sparkable{}
 	bp.compiled = true
 	bp.Implementation = map[string][]any{}
@@ -308,20 +313,26 @@ func (s *NativeSystem) Sparkable() *Sparkable {
 	}
 
 	s.implMux.Lock()
-	for f, ms := range s.impls {
-		for _, m := range ms {
-			impl := m.Implementation()
-			if impl == nil {
-				continue
-			}
-			impls, _ := bp.Implementation[f]
-			impls = append(impls, impl)
-			bp.Implementation[f] = impls
+	for _, ms := range s.extensions {
+		impl := ms.System.Implementation()
+		if impl == nil {
+			continue
 		}
+		impls, _ := bp.Implementation[ms.Factory]
+		f, err := s.node.GetFactory(ms.Factory)
+		if err != nil {
+			return nil, err
+		}
+		implData, err := f.Serialize(impl)
+		if err != nil {
+			return nil, err
+		}
+		impls = append(impls, implData)
+		bp.Implementation[ms.Factory] = impls
 	}
 	s.implMux.Unlock()
 
-	return bp
+	return bp, nil
 }
 
 func (s *NativeSystem) Interface() *Interface {
@@ -528,7 +539,7 @@ func (s *NativeSystem) Store(st store.Store) error {
 	_ = systemStore.Set("remoteNode", s.remoteNode)
 	_ = systemStore.Set("remoteID", s.remoteID.Hex())
 
-	bp, _ := s.Sparkable().ToInterface()
+	bp, _ := s.Sparkable()
 	bpJSON, _ := json.Marshal(bp)
 	_ = systemStore.Set("sparkable", string(bpJSON))
 
@@ -674,34 +685,43 @@ func (s *NativeSystem) Load(node *NativeNode, dom *Domain, st store.Store) error
 	return nil
 }
 
-func (s *NativeSystem) AddExtension(name string, impl SystemExtension) {
-	s.implMux.Lock()
-	exts, _ := s.impls[name]
-	exts = append(exts, impl)
-	s.impls[name] = exts
-	s.implMux.Unlock()
-}
-
-func (s *NativeSystem) SetExtension(name string, impl SystemExtension) {
-	s.implMux.Lock()
-	s.impls[name] = []SystemExtension{impl}
-	s.implMux.Unlock()
-}
-
-func (s *NativeSystem) Extensions(name string) []SystemExtension {
+func (s *NativeSystem) AddExtension(name string, ext FactorySystem) {
 	s.implMux.Lock()
 	defer s.implMux.Unlock()
-	return s.impls[name]
+	s.extensions = append(s.extensions, FactoryExtension{
+		Factory: name,
+		System:  ext,
+	})
 }
 
-func (s *NativeSystem) Extension(name string) SystemExtension {
+func (s *NativeSystem) SetExtension(name string, ext FactorySystem) {
+	for i, m := range s.extensions {
+		if m.Factory == name {
+			s.extensions[i].System = ext
+			return
+		}
+	}
+	s.AddExtension(name, ext)
+}
+
+func (s *NativeSystem) Extensions(name string) []FactorySystem {
+	exts := []FactorySystem{}
 	s.implMux.Lock()
 	defer s.implMux.Unlock()
-	exts := s.impls[name]
-	if len(exts) != 1 {
+	for _, m := range s.extensions {
+		if m.Factory == name {
+			exts = append(exts, m.System)
+		}
+	}
+	return exts
+}
+
+func (s *NativeSystem) Extension(name string) FactorySystem {
+	exsts := s.Extensions(name)
+	if len(exsts) != 1 {
 		return nil
 	}
-	return exts[0]
+	return exsts[0]
 }
 
 func (s *NativeSystem) Wrap(creds Credentials, mws Middlewares) *CredSystem {
@@ -734,6 +754,47 @@ func (s *NativeSystem) RemoteID() SystemID {
 
 func (s *NativeSystem) RemoteNode() string {
 	return s.remoteNode
+}
+
+func (s *NativeSystem) RedirectFrom(origin *NativeSystem) {
+	for _, origHub := range origin.Hubs(Credentials{}) {
+		func(origHub *NativeHub) {
+			hubInterf := origHub.Interface()
+			hub := s.GetHub(Credentials{}, nil, hubInterf.Name)
+			if hub == nil {
+				nativeHub := &NativeHub{
+					parent:       s,
+					hubInterface: hubInterf,
+				}
+				s.hubs = append(s.hubs, nativeHub)
+				return
+			}
+			nativeHub := hub.Native()
+
+			switch hubInterf.Type {
+			case HubTypePipe:
+				_ = nativeHub.Handle(NewNativeFunction(func(user Credentials, vals ...HubItem) ([]HubItem, error) {
+					return origHub.Invoke(user, nil, vals...)
+				}))
+
+			case HubTypeValue:
+				_, _ = nativeHub.Subscribe(Credentials{}, nil, NewNativeSubscription(func(id string, creds Credentials, val HubItem) {
+					_ = origHub.Set(creds, nil, id, val)
+				}))
+				_, _ = origHub.Subscribe(Credentials{}, nil, NewNativeSubscription(func(id string, creds Credentials, val HubItem) {
+					_ = nativeHub.Set(creds, nil, id, val)
+				}))
+
+			case HubTypeChannel:
+				_, _ = nativeHub.Subscribe(Credentials{}, nil, NewNativeSubscription(func(id string, creds Credentials, val HubItem) {
+					_ = origHub.Emit(creds, nil, id, val)
+				}))
+				_, _ = origHub.Subscribe(Credentials{}, nil, NewNativeSubscription(func(id string, creds Credentials, val HubItem) {
+					_ = nativeHub.Emit(creds, nil, id, val)
+				}))
+			}
+		}(origHub.Native())
+	}
 }
 
 type CredSystem struct {
@@ -888,8 +949,15 @@ func (s systemWrapper) Middleware(ext any, val HubItem, out bool) (HubItem, erro
 
 // SYSTEM IMPLEMENTATION
 
-type SystemExtension interface {
-	Implementation() Implementation
+type FactorySystem interface {
+	// Root returns the root system to which this FactorySystem is attached.
+	//Root() System
+
+	// The Factory which has created this FactoryExtension.
+	//Factory() Factory
+
+	// Implementation returns the FactoryImplementation of this FactorySystem.
+	Implementation() FactoryImplementation
 }
 
 func WaitFor(sys System, status int) {

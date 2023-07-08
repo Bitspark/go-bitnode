@@ -41,68 +41,29 @@ func (f *WSFactory) Name() string {
 	return "ws"
 }
 
-func (f *WSFactory) Implementation(impl bitnode.Implementation) (bitnode.Implementation, error) {
-	if impl == nil {
-		return &clientImpl{
-			factory: f,
-		}, nil
-	}
-	nImpl, ok := impl.(*clientImpl)
+func (f *WSFactory) Parse(data any) (bitnode.FactoryImplementation, error) {
+	dataJSON, _ := json.Marshal(data)
+	impl := &WSImpl{}
+	_ = json.Unmarshal(dataJSON, impl)
+	impl.factory = f
+	return impl, nil
+}
+
+func (f *WSFactory) Serialize(impl bitnode.FactoryImplementation) (any, error) {
+	impl, ok := impl.(*WSImpl)
 	if !ok {
-		return nil, fmt.Errorf("not a ws implementation")
-	} else {
-		nImpl.factory = f
+		return nil, fmt.Errorf("not a valid implementation")
 	}
-	return nImpl, nil
-}
-
-type clientImpl struct {
-	CID      string              `json:"cid" yaml:"cid"`
-	Node     string              `json:"node" yaml:"node"`
-	RemoteID bitnode.SystemID    `json:"remoteId" yaml:"remoteId"`
-	Creds    bitnode.Credentials `json:"credentials" yaml:"credentials"`
-	Server   bool                `json:"server" yaml:"server"`
-	factory  *WSFactory
-}
-
-func (c *clientImpl) FromInterface(a any) error {
-	ciBts, _ := json.Marshal(a)
-	return json.Unmarshal(ciBts, c)
-}
-
-func (c *clientImpl) ToInterface() (any, error) {
-	return c, nil
-}
-
-func (c *clientImpl) Implement(node *bitnode.NativeNode, sys bitnode.System) error {
-	_, err := c.factory.ReconnectClient(c.Node, c.CID, c.RemoteID, c.Creds, sys.Native(), c.Server)
-	return err
-}
-
-func (c *clientImpl) Extend(node *bitnode.NativeNode, ext bitnode.Implementation) (bitnode.Implementation, error) {
-	return c, nil
-}
-
-func (c *clientImpl) Validate() error {
-	return nil
-}
-
-type ClientExt struct {
-	Client    *Client
-	Connected bool
-}
-
-func (c ClientExt) Implementation() bitnode.Implementation {
-	return &clientImpl{
-		CID:      c.Client.cid,
-		Node:     c.Client.remoteNode,
-		RemoteID: c.Client.remoteID,
-		Creds:    c.Client.creds,
-		Server:   c.Client.server,
+	implBts, err := json.Marshal(impl)
+	if err != nil {
+		return nil, err
 	}
+	var implData any
+	if err := json.Unmarshal(implBts, &implData); err != nil {
+		return nil, err
+	}
+	return implData, nil
 }
-
-var _ bitnode.SystemExtension = &ClientExt{}
 
 func (f *WSFactory) Load(st store.Store, dom *bitnode.Domain) error {
 	nodeDS, err := st.Ensure("node", store.DSStores)
@@ -250,7 +211,7 @@ func (f *WSFactory) GetNodeByAddress(addr string) *Conn {
 	return nil
 }
 
-func (f *WSFactory) ReconnectClient(node string, cid string, remoteID bitnode.SystemID, creds bitnode.Credentials, native *bitnode.NativeSystem, server bool) (*Client, error) {
+func (f *WSFactory) ReconnectClient(node string, cid string, remoteID bitnode.SystemID, creds bitnode.Credentials, native *bitnode.NativeSystem, server bool) (*WSExt, error) {
 	f.connsMux.Lock()
 	if conn, ok := f.conns[node]; !ok {
 		f.connsMux.Unlock()
@@ -268,7 +229,7 @@ func (f *WSFactory) ReconnectClient(node string, cid string, remoteID bitnode.Sy
 			defined:      true,
 		}
 
-		native.SetExtension("ws", &ClientExt{Client: cl})
+		ext := &WSExt{Client: cl}
 
 		f.queueMux.Lock()
 		queuedClients, _ := f.queuedClients[node]
@@ -283,7 +244,7 @@ func (f *WSFactory) ReconnectClient(node string, cid string, remoteID bitnode.Sy
 		f.queuedClients[node] = queuedClients
 		f.queueMux.Unlock()
 
-		return cl, nil
+		return ext, nil
 	} else {
 		f.connsMux.Unlock()
 		var cl *Client
@@ -316,7 +277,7 @@ func (f *WSFactory) ReconnectClient(node string, cid string, remoteID bitnode.Sy
 			conn.clientsMux.Unlock()
 		}
 
-		native.SetExtension("ws", &ClientExt{Client: cl})
+		ext := &WSExt{Client: cl}
 
 		if !cl.server {
 			if err := conn.connectClient(cl); err != nil {
@@ -327,7 +288,7 @@ func (f *WSFactory) ReconnectClient(node string, cid string, remoteID bitnode.Sy
 			}
 		}
 
-		return cl, nil
+		return ext, nil
 	}
 }
 
@@ -353,7 +314,7 @@ func (f *WSFactory) AcceptClient(node string, cid string) (*Client, error) {
 			incomingIDs: map[string]bool{},
 			middlewares: f.node.Middlewares(),
 		}
-		//cl.SetExtension("ws", &ClientExt{Client: cl})
+		//cl.setExtension("ws", &ClientExt{Client: cl})
 		//orig, _ := cl.conn.factory.node.BlankSystem("")
 		//cl.AddOrigin("ws", orig)
 
@@ -376,4 +337,32 @@ func (f *WSFactory) Shutdown() error {
 		c.wsMux.Unlock()
 	}
 	return nil
+}
+
+type WSImpl struct {
+	CID      string              `json:"cid" yaml:"cid"`
+	Node     string              `json:"node" yaml:"node"`
+	RemoteID bitnode.SystemID    `json:"remoteId" yaml:"remoteId"`
+	Creds    bitnode.Credentials `json:"credentials" yaml:"credentials"`
+	Server   bool                `json:"server" yaml:"server"`
+	factory  *WSFactory
+}
+
+func (c *WSImpl) Implement(sys bitnode.System) (bitnode.FactorySystem, error) {
+	return c.factory.ReconnectClient(c.Node, c.CID, c.RemoteID, c.Creds, sys.Native(), c.Server)
+}
+
+type WSExt struct {
+	Client    *Client
+	Connected bool
+}
+
+func (c WSExt) Implementation() bitnode.FactoryImplementation {
+	return &WSImpl{
+		CID:      c.Client.cid,
+		Node:     c.Client.remoteNode,
+		RemoteID: c.Client.remoteID,
+		Creds:    c.Client.creds,
+		Server:   c.Client.server,
+	}
 }

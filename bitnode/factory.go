@@ -7,25 +7,24 @@ import (
 	"log"
 )
 
-type MarshalInterface interface {
-	FromInterface(any) error
-	ToInterface() (any, error)
-}
-
-type Implementation interface {
-	MarshalInterface
-	Implement(node *NativeNode, sys System) error
-	Validate() error
+// A FactoryImplementation contain all required data for the Factory to implement a system.
+type FactoryImplementation interface {
+	Implement(sys System) (FactorySystem, error)
 }
 
 // A Factory allows adding custom implementations to a system.
 type Factory interface {
-	Name() string
+	// The System providing system-level access to this Factory.
+	//System() System
 
-	Implementation(implData Implementation) (Implementation, error)
+	// Parse parses the provided interface into a FactoryImplementation.
+	Parse(data any) (FactoryImplementation, error)
+
+	// Serialize serializes a FactoryImplementation.
+	Serialize(impl FactoryImplementation) (any, error)
 }
 
-type Implementations map[string][]Implementation
+type Implementations map[string][]FactoryImplementation
 
 var yamlFactories map[string]Factory
 
@@ -48,11 +47,8 @@ func (m *Implementations) FromInterface(i any) error {
 			continue
 		}
 		for _, implData := range implDatas {
-			impl, err := f.Implementation(nil)
+			impl, err := f.Parse(implData)
 			if err != nil {
-				return err
-			}
-			if err := impl.FromInterface(implData); err != nil {
 				return err
 			}
 			iimpls, _ := (*m)[fName]
@@ -79,11 +75,8 @@ func (m *Implementations) UnmarshalYAML(value *yaml.Node) error {
 			continue
 		}
 		for _, implData := range implDatas {
-			impl, err := f.Implementation(nil)
+			impl, err := f.Parse(implData)
 			if err != nil {
-				return err
-			}
-			if err := impl.FromInterface(implData); err != nil {
 				return err
 			}
 			iimpls, _ := (*m)[fName]
@@ -116,11 +109,8 @@ func (m *Implementations) UnmarshalJSON(bts []byte) error {
 			continue
 		}
 		for _, implData := range implDatas {
-			impl, err := f.Implementation(nil)
+			impl, err := f.Parse(implData)
 			if err != nil {
-				return err
-			}
-			if err := impl.FromInterface(implData); err != nil {
 				return err
 			}
 			iimpls, _ := (*m)[fName]

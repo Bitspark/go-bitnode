@@ -13,7 +13,6 @@ type Sparkable struct {
 	RawSparkable
 }
 
-var _ Implementation = &Sparkable{}
 var _ Compilable = &Sparkable{}
 var _ Savable = &Sparkable{}
 
@@ -29,9 +28,6 @@ type RawSparkable struct {
 
 	// Constructor of this sparkable specifying values required for creation of this system.
 	Constructor HubItemsInterface `json:"constructor" yaml:"constructor"`
-
-	// Reference to another sparkable.
-	Reference string `json:"reference,omitempty" yaml:"reference,omitempty"`
 
 	// Interface specifies the interface the sparkable implements.
 	Interface *Interface `json:"interface" yaml:"interface"`
@@ -155,16 +151,14 @@ func (m *Sparkable) Implement(node *NativeNode, sys System) error {
 			return err
 		}
 		for _, implData := range implDatas {
-			implAny, _ := f.Implementation(nil)
-			if err := implAny.FromInterface(implData); err != nil {
-				return err
-			}
-			impl, err := f.Implementation(implAny)
+			impl, err := f.Parse(implData)
 			if err != nil {
 				return err
 			}
-			if err := impl.Implement(node, sys); err != nil {
+			if ext, err := impl.Implement(sys); err != nil {
 				return err
+			} else {
+				sys.Native().AddExtension(fName, ext)
 			}
 		}
 	}

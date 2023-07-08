@@ -104,7 +104,7 @@ func (c *Conn) AddClient() (*Client, error) {
 		incomingIDs:  map[string]bool{},
 		middlewares:  c.factory.node.Middlewares(),
 	}
-	cl.SetExtension("ws", &ClientExt{Client: cl})
+	cl.SetExtension("ws", &WSExt{Client: cl})
 
 	orig, _ := cl.conn.factory.node.BlankSystem("")
 	cl.AddOrigin("ws", orig)

@@ -35,7 +35,7 @@ func (f *SystemMiddleware) Middleware(ext any, val bitnode.HubItem, out bool) (b
 	if val == nil {
 		return nil, nil
 	}
-	//i := ext.(*bitnode.Interface)
+	//i := ext.(*prog.Interface)
 	s := val.(bitnode.System)
 	//if err := s.Interface().Contains(i); err != nil {
 	//	return nil, err

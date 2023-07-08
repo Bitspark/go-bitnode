@@ -145,8 +145,6 @@ type Domain struct {
 	Sparkables []*Sparkable `json:"blueprints" yaml:"blueprints"`
 
 	FilePath string `json:"-" yaml:"-"`
-
-	implementations map[string][]Implementation
 }
 
 func NewDomain() *Domain {
@@ -158,7 +156,6 @@ func NewDomain() *Domain {
 			Extend: PermissionGroup{},
 			View:   PermissionGroup{},
 		},
-		implementations: map[string][]Implementation{},
 	}
 }
 
@@ -257,12 +254,6 @@ func (dom *Domain) Compile() error {
 		if err := m.Compile(dom, dom.FullName, true); err != nil {
 			return fmt.Errorf("compile impl %s in domain %s: %v", m.Name, dom.FullName, err)
 		}
-		if dom.implementations == nil {
-			dom.implementations = Implementations{}
-		}
-		impls, _ := dom.implementations[m.Name]
-		impls = append(impls, m)
-		dom.implementations[m.Name] = impls
 	}
 	for _, d := range dom.Domains {
 		if err := d.Compile(); err != nil {

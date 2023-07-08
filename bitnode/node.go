@@ -183,15 +183,15 @@ func (h *NativeNode) BlankSystem(name string) (*NativeSystem, error) {
 
 	// Create the system.
 	sys := &NativeSystem{
-		node:    h,
-		id:      id,
-		name:    name,
-		systems: map[SystemID]*NativeSystem{},
-		origins: map[string]*NativeSystem{},
-		created: time.Now(),
-		events:  map[string]*LifecycleEvent{},
-		logs:    util.NewSorted[int64, LogMessage](),
-		impls:   map[string][]SystemExtension{},
+		node:       h,
+		id:         id,
+		name:       name,
+		systems:    map[SystemID]*NativeSystem{},
+		origins:    map[string]*NativeSystem{},
+		created:    time.Now(),
+		events:     map[string]*LifecycleEvent{},
+		logs:       util.NewSorted[int64, LogMessage](),
+		extensions: []FactoryExtension{},
 	}
 
 	if err := h.initSystem(sys); err != nil {
@@ -292,8 +292,7 @@ func (h *NativeNode) SetSystem(sys *NativeSystem) {
 	h.system = sys
 }
 
-func (h *NativeNode) AddFactory(f Factory) error {
-	name := f.Name()
+func (h *NativeNode) AddFactory(name string, f Factory) error {
 	if _, ok := h.factories[name]; ok {
 		return fmt.Errorf("factory already set: %s", name)
 	}
@@ -350,9 +349,9 @@ func (h *NativeNode) Load(st store.Store, dom *Domain) error {
 
 	for st := range systemStore.Enumerate() {
 		sys := &NativeSystem{
-			impls:   map[string][]SystemExtension{},
-			origins: map[string]*NativeSystem{},
-			node:    h,
+			extensions: []FactoryExtension{},
+			origins:    map[string]*NativeSystem{},
+			node:       h,
 		}
 		if err := sys.LoadInit(h, st); err != nil {
 			return err

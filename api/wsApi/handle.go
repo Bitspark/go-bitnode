@@ -78,7 +78,7 @@ func (msg *SystemMessageConn) HandleClient(client *Client, reference string) err
 			return err
 		}
 		client.NativeSystem = sys.Native()
-		client.SetExtension("ws", &ClientExt{Client: client})
+		client.SetExtension("ws", &WSExt{Client: client})
 	}
 	client.creds = msg.Credentials
 	client.send("init", &SystemMessageInit{
@@ -89,7 +89,7 @@ func (msg *SystemMessageConn) HandleClient(client *Client, reference string) err
 	if err := client.attachSystem(); err != nil {
 		return err
 	}
-	client.Extension("ws").(*ClientExt).Connected = true
+	client.Extension("ws").(*WSExt).Connected = true
 	return nil
 }
 
@@ -142,7 +142,7 @@ func (msg *SystemMessageInit) HandleClient(client *Client, reference string) err
 	}
 
 	client.SetExtends(msg.Extends)
-	client.Extension("ws").(*ClientExt).Connected = true
+	client.Extension("ws").(*WSExt).Connected = true
 
 	_ = client.Native().EmitEvent(bitnode.LifecycleStart)
 

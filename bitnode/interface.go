@@ -51,7 +51,6 @@ type RawInterface struct {
 }
 
 var _ Compilable = &Interface{}
-var _ MarshalInterface = &Interface{}
 var _ Savable = &Interface{}
 
 func NewInterface() *Interface {
@@ -395,8 +394,6 @@ func (i *HubInterface) MarshalYAML() (interface{}, error) {
 
 type HubInterfaces []*HubInterface
 
-var _ MarshalInterface = &HubInterfaces{}
-
 func (i *HubInterfaces) AddHub(hub *HubInterface) error {
 	if hub := i.GetHub(hub.Name); hub != nil {
 		return fmt.Errorf("already have hub with that name: %s", hub.Name)
@@ -479,7 +476,6 @@ type HubItemInterface struct {
 }
 
 var _ Compilable = &HubItemInterface{}
-var _ MarshalInterface = &HubItemInterface{}
 
 func (i *HubItemInterface) Reset() {
 	if i.Value != nil {
@@ -569,8 +565,6 @@ func (i *HubItemInterface) ApplyMiddlewares(mws Middlewares, val HubItem, out bo
 }
 
 type HubItemsInterface []*HubItemInterface
-
-var _ MarshalInterface = &HubItemsInterface{}
 
 func (m *HubItemsInterface) FromInterface(a any) error {
 	dat, err := json.Marshal(a)

@@ -16,6 +16,8 @@ type Hub interface {
 	// Name returns the name of the hub.
 	Name() string
 
+	Native() *NativeHub
+
 	// Interface returns the interface of the hub.
 	Interface() *HubInterface
 
@@ -138,6 +140,10 @@ func (p *NativeHub) Name() string {
 
 func (p *NativeHub) Interface() *HubInterface {
 	return p.hubInterface
+}
+
+func (p *NativeHub) Native() *NativeHub {
+	return p
 }
 
 func (p *NativeHub) Push(creds Credentials, mws Middlewares, id string, val HubItem) error {
