@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Bitspark/go-bitnode/bitnode"
+	"log"
 	"sync"
 	"time"
 )
@@ -148,6 +149,7 @@ func (cl *Client) send(cmd string, m SystemMessage, reference string, returns bo
 	if cl.conn == nil {
 		panic("connection not found")
 	}
+	log.Printf("client %s -> %s {%v}", cl.cid, cmd, m)
 	chSent := make(chan bool)
 	chRef := &ClientRefChan{cmd: cmd, ch: make(chan any)}
 	go func(c *Client, nconn *Conn, chSent chan bool, ch *ClientRefChan, reference string, returns bool) {

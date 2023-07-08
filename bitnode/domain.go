@@ -221,7 +221,6 @@ func (dom *Domain) LoadFromFile(file string) error {
 
 	defs := Domain{}
 	if err := yaml.Unmarshal(chDefsBytes, &defs); err != nil {
-		yamlFactories = nil
 		return fmt.Errorf("parsing definitions from %s: %v", file, err)
 	}
 

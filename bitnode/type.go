@@ -267,34 +267,6 @@ func (t *RawType) Contains(t2 *RawType) error {
 	return fmt.Errorf("types do not match")
 }
 
-func (t *Type) Accepts(src *Type) (bool, error) {
-	return t.Compiled.accepts(src.Compiled, "")
-}
-
-func (t *Type) Extend(base *Type) error {
-	if base == nil {
-		return nil
-	}
-	if base.MapOf != nil {
-		if t.Compiled.MapOf == nil {
-			return fmt.Errorf("base is a map, require map")
-		}
-		// TODO
-		return nil
-	} else if base.ListOf != nil {
-		if t.Compiled.ListOf == nil {
-			return fmt.Errorf("base is a list, require list")
-		}
-
-	} else if base.TupleOf != nil {
-		if t.Compiled.TupleOf == nil {
-			return fmt.Errorf("base is a tuple, require tuple")
-		}
-
-	}
-	return fmt.Errorf("cannot extend this type")
-}
-
 func (t *RawType) ApplyMiddlewares(mws Middlewares, val HubItem, out bool) (any, error) {
 	validated := false
 	for f, ext := range t.Extensions {
@@ -473,6 +445,34 @@ func (t *RawType) ApplyMiddlewares(mws Middlewares, val HubItem, out bool) (any,
 	//}
 
 	return val, nil
+}
+
+func (t *Type) Accepts(src *Type) (bool, error) {
+	return t.Compiled.accepts(src.Compiled, "")
+}
+
+func (t *Type) Extend(base *Type) error {
+	if base == nil {
+		return nil
+	}
+	if base.MapOf != nil {
+		if t.Compiled.MapOf == nil {
+			return fmt.Errorf("base is a map, require map")
+		}
+		// TODO
+		return nil
+	} else if base.ListOf != nil {
+		if t.Compiled.ListOf == nil {
+			return fmt.Errorf("base is a list, require list")
+		}
+
+	} else if base.TupleOf != nil {
+		if t.Compiled.TupleOf == nil {
+			return fmt.Errorf("base is a tuple, require tuple")
+		}
+
+	}
+	return fmt.Errorf("cannot extend this type")
 }
 
 func (t *Type) MarshalYAML() (interface{}, error) {

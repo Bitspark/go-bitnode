@@ -3,6 +3,7 @@ package wsApi
 import (
 	"fmt"
 	"github.com/Bitspark/go-bitnode/bitnode"
+	"log"
 )
 
 const wsPath = "/ws"
@@ -352,6 +353,7 @@ type SystemMessageLifecycleStatus struct {
 }
 
 func (msg *SystemMessageLifecycleStatus) HandleClient(client *Client, reference string) error {
+	log.Println(*msg)
 	if client.server {
 		return fmt.Errorf("status: %s not a client", client.cid)
 	}

@@ -242,14 +242,17 @@ func (h *NativeNode) ImplementSystem(sys *NativeSystem, m Sparkable) error {
 
 func (h *NativeNode) initSystem(s *NativeSystem) error {
 	s.AddCallback(LifecycleName, NewNativeEvent(func(vals ...HubItem) error {
+		oldName := s.name
 		name := vals[0].(string)
 		s.name = name
+		log.Printf("%s name: %s", oldName, s.name)
 		return nil
 	}))
 
 	s.AddCallback(LifecycleStatus, NewNativeEvent(func(vals ...HubItem) error {
 		status := vals[0].(int64)
 		s.status = int(status)
+		log.Printf("%s status: %d", s.name, s.status)
 		return nil
 	}))
 
@@ -297,7 +300,6 @@ func (h *NativeNode) AddFactory(name string, f Factory) error {
 		return fmt.Errorf("factory already set: %s", name)
 	}
 	h.factories[name] = f
-	yamlFactories = h.factories
 	return nil
 }
 
